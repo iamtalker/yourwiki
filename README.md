@@ -127,14 +127,27 @@ sudo bash server/yourwiki.sh install-service   # 부팅 때 자동 시작(system
 
 ### 중계소 열기
 
-고정 도메인과 HTTPS(nginx·Caddy 등)가 있는 서버에서 Docker 로 `HUB=on` 을 주면 그 서버가 중계소가 됩니다(`/_hub/`).
-중계소를 연 서버도 보통의 유어위키로 함께 동작합니다. 여러 곳에 두면 한 곳이 꺼져도 나머지로 이어집니다.
+중계소는 **항상 켜져 있고 주소가 바뀌지 않는 서버**가 하나 필요합니다. 위키 전체가 필요 없고(최근 30일 동안 오간 문서만 보관),
+문서마다 서명과 해시가 붙어 있어 중계소를 거쳐도 내용이 바뀌지 않으므로 작은 무료 서버와 `http://공인IP:포트` 로 충분합니다.
 
-```bash
-HUB=on P2P=on P2P_HUBS=https://내-중계소-도메인 docker compose up -d
-```
+**Oracle Cloud 무료 서버에 열기**
 
-- 리눅스·Docker 환경 변수: `P2P=on`, `P2P_HUBS=https://중계소1,https://중계소2`, `P2P_FRIENDS=친구ID1,친구ID2`, `HUB=on`.
+1. [Oracle Cloud](https://www.oracle.com/cloud/free/) 가입(전화번호·카드 확인이 필요하지만 무료 한도 안에서는 청구되지 않습니다).
+2. 콘솔 → Compute → Instances → **Create instance**. 이미지는 **Ubuntu**, 모양은 무료(Always Free) 표시가 있는 것
+   (Ampere A1 또는 E2.1.Micro). SSH 키를 받아 두고 만듭니다. 공인 IP 가 바뀌지 않게 하려면 네트워크에서 **예약된 공인 IP**를 붙입니다.
+3. 콘솔에서 방화벽 열기: 인스턴스 → 서브넷 → **Security List** → **Add Ingress Rules** →
+   Source CIDR `0.0.0.0/0`, IP Protocol `TCP`, Destination Port `8080`.
+4. SSH 로 접속해서:
+   ```bash
+   git clone https://github.com/iamtalker/yourwiki && cd yourwiki
+   sudo bash server/hub-setup.sh
+   ```
+   마지막에 나오는 `http://공인IP:8080` 이 중계소 주소입니다.
+5. 이 주소를 `sources.json` 의 `p2p.hubs` 에 넣으면 모든 유어위키의 기본 중계소가 됩니다(관리판에서 각자 적어도 됩니다).
+
+- 다른 서버: 파이썬 3.8 이상만 있으면 `python3 scripts/hub_server.py --listen 0.0.0.0:8080` 으로 띄웁니다.
+- 위키와 함께 여는 방법도 있습니다: Docker·리눅스에서 `HUB=on` 이면 위키 주소의 `/_hub/` 가 중계소가 됩니다.
+- 리눅스·Docker 환경 변수: `P2P=on`, `P2P_HUBS=http://중계소1,http://중계소2`, `P2P_FRIENDS=친구ID1,친구ID2`, `HUB=on`.
 - 내 ID 보기: `python scripts/p2p.py wiki --id` (관리판에도 표시).
 
 ## 다른 위키로 내보내기 (1.2: MediaWiki · DokuWiki · Markdown)
