@@ -34,7 +34,7 @@ INTERVAL = 6.0            # 초 (분당 10건)
 COOLDOWN = 24 * 3600      # 같은 문서 다시 받기까지
 RC_EVERY = 300            # 최근 변경 확인 주기(초)
 ROBOTS_EVERY = 3600
-SKIP_PREFIX = ("틀:", "파일:", "사용자:", "특수기능:", "휴지통:", "파일휴지통:")
+SKIP_PREFIX = ("틀:", "파일:", "사용자:", "삭제된사용자:", "특수기능:", "휴지통:", "파일휴지통:")
 PRINCIPLE = ("[원칙] robots.txt 준수 · 6초에 1건 이하 · 캡차/차단/이상 응답 감지 시 즉시 중단 · 우회하지 않음 · "
              f"User-Agent: {UA}")
 LICENSE_URL = "https://creativecommons.org/licenses/by-nc-sa/2.0/kr/"
@@ -44,6 +44,10 @@ class Stop(Exception):
     """멈춰야 하는 상황(차단, robots 금지 등)."""
 
 
+class Forbidden(Exception):
+    """문서 하나가 접근 금지(403)인 경우. 연달아 여러 문서에서 나면 차단으로 본다."""
+
+
 def log(msg):
     print(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg, flush=True)
 
@@ -51,6 +55,7 @@ def log(msg):
 class Fetcher:
     def __init__(self):
         self.last = 0.0
+        self.forbidden = 0
         self.robots = None
         self.robots_at = 0.0
 
@@ -108,7 +113,13 @@ class Fetcher:
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 return None
+            if e.code == 403 and path.startswith("/w/"):
+                self.forbidden += 1
+                if self.forbidden >= 3:
+                    raise Stop(f"서로 다른 문서에서 연달아 403 → 차단으로 보고 중단 (마지막: {path})")
+                raise Forbidden(path)
             raise Stop(f"HTTP {e.code} ({path}) → 차단 가능성, 중단")
+        self.forbidden = 0
         low = body[:20000].lower()
         if any(k in low for k in ("captcha-challenge", "cf-chl", "just a moment", "g-recaptcha\"", "hcaptcha-box")):
             raise Stop(f"캡차/봇 확인 화면 감지 ({path}) → 중단")
@@ -196,7 +207,14 @@ def apply(wiki_dir, title, text, info, modified):
 
 
 def refresh(f, q, wiki_dir, size_map, title):
-    body = f.get("/w/" + urllib.parse.quote(title, safe=""))
+    try:
+        body = f.get("/w/" + urllib.parse.quote(title, safe=""))
+    except Forbidden:
+        q.execute("delete from queue where title = ?", (title,))
+        q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), "forbidden"))
+        q.commit()
+        log(f"건너뜀(접근 금지 문서): {title}")
+        return
     q.execute("delete from queue where title = ?", (title,))
     if body is None:
         log(f"없음(404): {title}")
