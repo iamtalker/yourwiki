@@ -6,8 +6,9 @@
 #   sudo bash server/yourwiki.sh install-service   # systemd 에 등록해 부팅 때 자동 시작
 #
 # 환경 변수: LISTEN(기본 0.0.0.0:3000), SYNC(auto|queue|off, 기본 auto)
-#            P2P(on|off, 기본 off): 다른 유어위키와 받은 문서 나누기
-#            P2P_URL: 다른 위키가 나를 찾아올 공개 주소(https://...), P2P_PEERS: 믿는 피어 주소(쉼표로 구분)
+#            P2P(on|off, 기본 off): 다른 유어위키와 받은 문서 나누기(중계소를 거침)
+#            P2P_HUBS: 중계소 주소(쉼표로 구분, 비우면 sources.json 의 기본값), P2P_FRIENDS: 친구 ID(쉼표로 구분)
+#            HUB(on|off, 기본 off): 이 서버를 중계소로도 연다(/_hub/, 고정 도메인 + HTTPS 뒤에서)
 # HTTPS 는 nginx·Caddy 같은 역방향 프록시를 3000번 앞에 두세요.
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,20 +30,24 @@ case "${1:-}" in
     [ -f wiki/data.db ] || { echo "아직 설치되지 않았습니다: bash server/install.sh"; exit 1; }
     (cd wiki && launch engine server.log ./main.bin 3001 --localhost)
     export PYTHONUTF8=1
-    P2P_ARGS=()
+    P2P_ARGS=(); HUB_ARGS=()
+    [ "${HUB:-off}" = on ] && HUB_ARGS=(--hub)
     if [ "$P2P" = on ]; then
       P2P_ARGS=(--p2p)
-      PEER_ARGS=(); IFS=',' read -ra PS <<< "${P2P_PEERS:-}"
-      for p in "${PS[@]}"; do [ -n "$p" ] && PEER_ARGS+=(--peer "$p"); done
-      launch p2p p2p.log python3 scripts/p2p.py wiki --watch --self-url "${P2P_URL:-}" "${PEER_ARGS[@]}"
+      X=(); IFS=',' read -ra PS <<< "${P2P_HUBS:-}"
+      for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--hub "$p"); done
+      IFS=',' read -ra PS <<< "${P2P_FRIENDS:-}"
+      for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--friend "$p"); done
+      launch p2p p2p.log python3 scripts/p2p.py wiki --watch "${X[@]}"
+      echo "내 P2P ID: $(python3 scripts/p2p.py wiki --id)"
     fi
     launch proxy proxy.log python3 scripts/offline_proxy.py assets --listen "$LISTEN" \
-      --upstream 127.0.0.1:3001 --queue-db wiki/updater.db "${P2P_ARGS[@]}"
+      --upstream 127.0.0.1:3001 --queue-db wiki/updater.db "${HUB_ARGS[@]}"
     case "$SYNC" in
       auto)  launch updater updater.log python3 scripts/updater.py wiki --watch "${P2P_ARGS[@]}" ;;
       queue) launch updater updater.log python3 scripts/updater.py wiki --watch --queue-only "${P2P_ARGS[@]}" ;;
     esac
-    echo "켰습니다: http://$LISTEN (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: $P2P"
+    echo "켰습니다: http://$LISTEN (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: $P2P · 중계소: ${HUB:-off}"
     echo "※ CC BY-NC-SA 2.0 KR · 상업적 이용 금지 · 광고를 붙이거나 상업적으로 운영하면 라이선스 위반입니다."
     ;;
   stop)
@@ -68,7 +73,7 @@ After=network-online.target
 [Service]
 Type=forking
 User=$USER_NAME
-Environment=LISTEN=$LISTEN SYNC=$SYNC P2P=$P2P "P2P_URL=${P2P_URL:-}" "P2P_PEERS=${P2P_PEERS:-}"
+Environment=LISTEN=$LISTEN SYNC=$SYNC P2P=$P2P HUB=${HUB:-off} "P2P_HUBS=${P2P_HUBS:-}" "P2P_FRIENDS=${P2P_FRIENDS:-}"
 ExecStart=/usr/bin/env bash $KIT/server/yourwiki.sh start
 ExecStop=/usr/bin/env bash $KIT/server/yourwiki.sh stop
 RemainAfterExit=yes

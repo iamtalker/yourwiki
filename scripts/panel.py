@@ -77,24 +77,27 @@ def start_updater():
         args.append("--queue-only")
     if settings().get("p2p"):
         args.append("--p2p")
-        if settings().get("p2p_trust_any"):
-            args.append("--p2p-trust-any")
     spawn("updater", args, "updater.log")
 
 
 def start_p2p():
-    """P2P 작업자: 다른 유어위키가 받은 문서를 가져온다. 공개 주소가 있으면 그 주소를 다른 위키에 알린다."""
+    """P2P 작업자: 내가 나무위키에서 받은 문서를 중계소로 보내고, 다른 유어위키가 보낸 것을 받아 온다."""
     stop("p2p")
     s = settings()
     if not s.get("p2p") or not os.path.exists(os.path.join(WIKI, "data.db")):
         return
-    args = [sys.executable, os.path.join(SCRIPTS, "p2p.py"), WIKI, "--watch",
-            "--tunnel-log", os.path.join(ROOT, "tunnel.log")]
-    for peer in s.get("p2p_peers", []):
-        args += ["--peer", peer]
-    if s.get("p2p_trust_any"):
-        args.append("--trust-any")
+    args = [sys.executable, os.path.join(SCRIPTS, "p2p.py"), WIKI, "--watch"]
+    for h in p2p_hubs():
+        args += ["--hub", h]
+    for f in s.get("p2p_friends", []):
+        args += ["--friend", f]
     spawn("p2p", args, "p2p.log")
+
+
+def p2p_hubs():
+    """관리판에 적은 중계소, 없으면 sources.json 의 기본 중계소."""
+    import p2p
+    return settings().get("p2p_hubs") or p2p.default_hubs()
 
 
 def start_proxy():
@@ -102,8 +105,6 @@ def start_proxy():
     args = [sys.executable, os.path.join(SCRIPTS, "offline_proxy.py"), os.path.join(ROOT, "assets"),
             "--listen", settings()["listen"], "--upstream", "127.0.0.1:3001",
             "--queue-db", os.path.join(WIKI, "updater.db")]
-    if settings().get("p2p"):
-        args.append("--p2p")
     spawn("proxy", args, "proxy.log")
 
 
@@ -185,19 +186,18 @@ def tunnel(on):
     return "공개를 시작했습니다. 잠시 뒤 공개 주소가 표시됩니다"
 
 
-def set_p2p(on=None, peers=None, trust_any=None):
+def set_p2p(on=None, hubs=None, friends=None):
+    import p2p
     s = settings()
     if on is not None:
         s["p2p"] = on
-    if peers is not None:
-        import p2p
-        s["p2p_peers"] = [u for u in (p2p.norm_url(x) for x in re.split(r"[\s,]+", peers)) if u]
-    if trust_any is not None:
-        s["p2p_trust_any"] = trust_any
+    if hubs is not None:
+        s["p2p_hubs"] = [u for u in (p2p.norm_url(x) for x in re.split(r"[\s,]+", hubs)) if u]
+    if friends is not None:
+        s["p2p_friends"] = [x.lower() for x in re.split(r"[\s,]+", friends) if p2p.HEX64.match(x.lower())]
     save_settings(s)
     if alive("engine"):  # 켜져 있으면 바뀐 설정으로 다시 띄운다
         with lock:
-            start_proxy()
             start_updater()
             start_p2p()
     if on is False:
@@ -206,19 +206,26 @@ def set_p2p(on=None, peers=None, trust_any=None):
 
 
 def p2p_status():
-    out = {"peers": 0, "alive": 0, "shared": 0, "received_today": 0, "banned": 0, "audits_ok": 0, "unaudited": 0}
+    out = {"hubs_alive": 0, "nodes": 0, "proven": 0, "friends": 0, "banned": 0, "audits_ok": 0, "unaudited": 0,
+           "sent": 0, "received_today": 0, "id": ""}
+    if not os.path.exists(os.path.join(WIKI, "data.db")):
+        return out
     try:
-        q = sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5)
+        import p2p
+        out["id"] = p2p.my_id(WIKI)
+        q = p2p.init(sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5))
         now = time.time()
-        out["peers"] = q.execute("select count(*) from peers").fetchone()[0]
-        out["alive"] = q.execute("select count(*) from peers where last_ok > ? and banned = 0",
-                                 (now - 600,)).fetchone()[0]
-        out["shared"] = q.execute("select count(*) from shared").fetchone()[0]
-        out["received_today"] = q.execute("select count(*) from shared where src = 'p2p' and at > ?",
-                                          (now - 86400,)).fetchone()[0]
-        out["banned"] = q.execute("select count(*) from peers where banned = 1").fetchone()[0]
-        out["audits_ok"] = q.execute("select coalesce(sum(audits_ok), 0) from peers").fetchone()[0]
-        out["unaudited"] = q.execute("select count(*) from shared where src = 'p2p' and audited = 0").fetchone()[0]
+        one = lambda sql, *a: q.execute(sql, a).fetchone()[0]  # noqa: E731
+        out["hubs_alive"] = one("select count(*) from hubs where last_ok > ?", now - 600)
+        out["nodes"] = one("select count(*) from nodes where banned = 0")
+        out["proven"] = one("select count(*) from nodes where banned = 0 and trusted = 0 and audits_ok >= ? "
+                            "and audits_bad = 0", p2p.PROBATION)
+        out["friends"] = one("select count(*) from nodes where trusted = 1")
+        out["banned"] = one("select count(*) from nodes where banned = 1")
+        out["audits_ok"] = one("select coalesce(sum(audits_ok), 0) from nodes")
+        out["unaudited"] = one("select count(*) from shared where src = 'p2p' and audited = 0")
+        out["sent"] = one("select count(*) from shared where src = 'namu'")
+        out["received_today"] = one("select count(*) from shared where src = 'p2p' and at > ?", now - 86400)
         q.close()
     except sqlite3.Error:
         pass
@@ -402,8 +409,8 @@ def status():
     st["export_log"] = tail("export.log", 6)
     st["export_dir"] = EXPORT_DIR
     st["public_url"] = tunnel_url()
-    st["p2p"] = dict(p2p_status(), on=bool(s.get("p2p")), peers_list=s.get("p2p_peers", []),
-                     trust_any=bool(s.get("p2p_trust_any")), log=tail("p2p.log", 8))
+    st["p2p"] = dict(p2p_status(), on=bool(s.get("p2p")), hubs_list=p2p_hubs(),
+                     friends_list=s.get("p2p_friends", []), log=tail("p2p.log", 8))
     return st
 
 
@@ -431,17 +438,21 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
 <label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
 <p style="font-size:13px;color:#555">갱신기는 나무위키 서버 부담 때문에 6초에 1건만 받습니다. P2P 를 켜면 참여한 유어위키들이
-<b>서로 다른 문서</b>를 받아 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).<br>
-다른 위키가 나를 찾아오려면 아래 [공개하기]로 공개 주소가 있어야 합니다. 공개하지 않으면 <b>받기만</b> 합니다.</p>
-<div style="font-size:13px">믿는 피어 주소 (한 줄에 하나, 예: 친구의 공개 주소):<br>
-<textarea id="peers" rows="3" style="width:100%;font-size:13px"></textarea>
-<button onclick="api('/api/p2p_peers?peers='+encodeURIComponent(document.getElementById('peers').value)).then(load)">피어 저장</button>
-<label style="margin-left:12px"><input type="checkbox" id="trustany" onchange="api('/api/p2p?trust_any='+(this.checked?1:0)).then(load)">
-찾은 피어 한 곳만으로도 받기 (빠르지만 위험)</label></div>
-<p style="font-size:12px;color:#a60">믿는 피어가 준 문서는 바로 받습니다. 서로 알려 주다 찾은 피어는, 서로 다른 두 곳 이상이 나무위키에서 직접 받은
-같은 내용일 때만 받습니다. <b>사보타주 방지</b>: 갱신기가 P2P 로 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고,
-거짓 내용이 확인되면 그 피어를 차단하고 그 피어에게서 받은 문서를 모두 되돌립니다. 새 피어는 검증 5건을 통과할 때까지 한 시간에 100개까지만 받고,
-내 문서와 절반 넘게 다른 내용은 P2P 로 받지 않고 나무위키에서 직접 확인합니다.</p>
+<b>서로 다른 문서</b>를 받아 <b>중계소</b>를 거쳐 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).
+중계소로 보내고 받기만 하므로 공개 주소나 공유기 설정이 필요 없습니다.</p>
+<div style="font-size:13px">내 ID (친구에게 알려 주세요): <code id="myid" style="word-break:break-all"></code>
+<button onclick="navigator.clipboard.writeText(document.getElementById('myid').textContent)">복사</button></div>
+<div style="font-size:13px;margin-top:8px">중계소 주소 (한 줄에 하나, 비우면 기본 중계소):<br>
+<textarea id="hubs" rows="2" style="width:100%;font-size:13px"></textarea>
+<button onclick="api('/api/p2p_hubs?hubs='+encodeURIComponent(document.getElementById('hubs').value)).then(load)">중계소 저장</button></div>
+<div style="font-size:13px;margin-top:8px">친구 ID (한 줄에 하나. 친구가 보낸 문서는 바로 받습니다):<br>
+<textarea id="friends" rows="2" style="width:100%;font-size:13px"></textarea>
+<button onclick="api('/api/p2p_friends?ids='+encodeURIComponent(document.getElementById('friends').value)).then(load)">친구 저장</button></div>
+<p style="font-size:12px;color:#a60"><b>사보타주 방지</b>: 믿음은 주소가 아니라 ID 의 <b>검증 실적</b>으로만 쌓입니다.
+갱신기가 P2P 로 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고, 5건을 통과한 ID 만 '검증된 ID' 가 됩니다.
+거짓이 확인되면 그 ID 를 차단하고 그 ID 에게서 받은 문서를 모두 되돌립니다. 새 ID(수습)들에게서는 <b>모두 합쳐</b> 한 시간에 200개까지만 받으므로,
+공격자가 ID 를 아무리 많이 만들어도 퍼질 수 있는 양은 늘지 않습니다. 내 문서와 절반 넘게 다른 내용은 나무위키에서 직접 확인합니다.
+받은 문서는 역사에 어느 ID 에서 왔는지 남습니다.</p>
 <div id="p2pst"></div><pre id="plog"></pre></section>
 <section><h2>위키 색</h2>
 <span id="swatch" style="display:inline-block;width:28px;height:28px;border-radius:6px;vertical-align:middle;border:1px solid #ccc"></span>
@@ -493,12 +504,13 @@ dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중
 (s.running.engine?(s.ready?'<br><b class=on>위키 준비됨 — [위키 열기]를 누르세요</b>':'<br><b>위키 엔진 시작 중… (문서가 많아 몇 분 걸릴 수 있습니다)</b>'):'');
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);
 var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.value==(p.on?'1':'0'));
-if(document.activeElement.id!=='peers')document.getElementById('peers').value=p.peers_list.join('\n');
-document.getElementById('trustany').checked=p.trust_any;
-document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · 아는 피어 '+p.peers+'곳 (응답 중 '+p.alive+'곳) · 나눠 줄 수 있는 문서 '+
-p.shared+'개 · 최근 24시간 P2P로 받은 문서 '+p.received_today+'개'+(s.public_url?'':' · <b>공개 주소 없음: 받기만 합니다</b>')+
-'<br><span style="font-size:13px">사보타주 검증: 통과 '+p.audits_ok+'건 · 검증 대기 '+p.unaudited+'건 · 차단한 피어 '+
-(p.banned?'<b style="color:#c00">'+p.banned+'곳</b>':'0곳')+'</span>'):'';
+document.getElementById('myid').textContent=p.id||'(설치 뒤에 만들어집니다)';
+if(document.activeElement.id!=='hubs')document.getElementById('hubs').value=p.hubs_list.join('\n');
+if(document.activeElement.id!=='friends')document.getElementById('friends').value=p.friends_list.join('\n');
+document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · 중계소 '+p.hubs_list.length+'곳 중 '+p.hubs_alive+'곳 연결 · 내가 보낸 문서 '+
+p.sent+'개 · 최근 24시간 받은 문서 '+p.received_today+'개'+(p.hubs_list.length?'':' · <b>중계소가 없습니다</b>')+
+'<br><span style="font-size:13px">아는 ID '+p.nodes+'개 (친구 '+p.friends+' · 검증된 ID '+p.proven+') · 검증 통과 '+p.audits_ok+'건 · 검증 대기 '+p.unaudited+
+'건 · 차단한 ID '+(p.banned?'<b style="color:#c00">'+p.banned+'개</b>':'0개')+'</span>'):'';
 document.getElementById('plog').textContent=p.on?p.log.join(''):'';
 document.getElementById('sync').textContent='대기열 '+s.queue+'개'+(s.queue_eta?' (지금 속도면 약 '+s.queue_eta+' 뒤 비움)':'')+' · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
@@ -555,11 +567,11 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/install":
             msg = run_install((q.get("edition") or ["2026"])[0])
         elif u.path == "/api/p2p":
-            on = q.get("on", [None])[0]
-            ta = q.get("trust_any", [None])[0]
-            msg = set_p2p(on=None if on is None else on == "1", trust_any=None if ta is None else ta == "1")
-        elif u.path == "/api/p2p_peers":
-            msg = set_p2p(peers=(q.get("peers") or [""])[0])
+            msg = set_p2p(on=(q.get("on") or ["0"])[0] == "1")
+        elif u.path == "/api/p2p_hubs":
+            msg = set_p2p(hubs=(q.get("hubs") or [""])[0])
+        elif u.path == "/api/p2p_friends":
+            msg = set_p2p(friends=(q.get("ids") or [""])[0])
         elif u.path == "/api/export":
             msg = run_export((q.get("to") or [""])[0])
         elif u.path == "/api/sync":

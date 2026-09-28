@@ -58,6 +58,6 @@
   },
   "default_edition": "2026",
   "p2p": {
-    "bootstrap": []
+    "hubs": []
   }
 }

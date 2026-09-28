@@ -5,7 +5,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /kit
 COPY . /kit
-ENV LISTEN=0.0.0.0:3000 SYNC=auto COLOR=#3b5bdb EDITION= PYTHONUTF8=1 P2P=off P2P_URL= P2P_PEERS=
+ENV LISTEN=0.0.0.0:3000 SYNC=auto COLOR=#3b5bdb EDITION= PYTHONUTF8=1 P2P=off P2P_HUBS= P2P_FRIENDS= HUB=off
 EXPOSE 3000
 VOLUME ["/kit/wiki", "/kit/data"]
 ENTRYPOINT ["bash", "docker/entrypoint.sh"]

@@ -16,16 +16,20 @@ echo "※ 이 데이터는 CC BY-NC-SA 2.0 KR입니다. 상업적 이용은 금�
 echo "  이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다."
 
 (cd wiki && ./main.bin 3001 --localhost) &
-P2P_ARGS=()
+P2P_ARGS=(); HUB_ARGS=()
+[ "${HUB:-off}" = on ] && HUB_ARGS=(--hub)
 if [ "${P2P:-off}" = on ]; then
   P2P_ARGS=(--p2p)
-  PEER_ARGS=(); IFS=',' read -ra PS <<< "${P2P_PEERS:-}"
-  for p in "${PS[@]}"; do [ -n "$p" ] && PEER_ARGS+=(--peer "$p"); done
-  python3 scripts/p2p.py wiki --watch --self-url "${P2P_URL:-}" "${PEER_ARGS[@]}" &
+  X=(); IFS=',' read -ra PS <<< "${P2P_HUBS:-}"
+  for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--hub "$p"); done
+  IFS=',' read -ra PS <<< "${P2P_FRIENDS:-}"
+  for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--friend "$p"); done
+  echo "== 내 P2P ID: $(python3 scripts/p2p.py wiki --id)"
+  python3 scripts/p2p.py wiki --watch "${X[@]}" &
 fi
 case "$SYNC" in
   auto)  python3 scripts/updater.py wiki --watch "${P2P_ARGS[@]}" & ;;
   queue) python3 scripts/updater.py wiki --watch --queue-only "${P2P_ARGS[@]}" & ;;
 esac
-echo "== 유어위키: http://<서버 주소>:${LISTEN##*:} (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: ${P2P:-off}"
-exec python3 scripts/offline_proxy.py assets --listen "$LISTEN" --upstream 127.0.0.1:3001 --queue-db wiki/updater.db "${P2P_ARGS[@]}"
+echo "== 유어위키: http://<서버 주소>:${LISTEN##*:} (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: ${P2P:-off} · 중계소: ${HUB:-off}"
+exec python3 scripts/offline_proxy.py assets --listen "$LISTEN" --upstream 127.0.0.1:3001 --queue-db wiki/updater.db "${HUB_ARGS[@]}"

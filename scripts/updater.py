@@ -156,9 +156,9 @@ def enqueue(q, title, priority=0, reason=""):
               "priority = max(priority, excluded.priority)", (title, priority, reason, time.time()))
 
 
-def next_title(q, share=False, trust_any=False):
+def next_title(q, share=False):
     """다음에 받을 문서. share(P2P)면 같은 우선순위 안에서 순서를 섞어 피어마다 다른 문서를 받게 하고,
-    대기열에 들어온 뒤에 믿을 만한 피어가 이미 받은 문서는 건너뛴다(P2P 작업자가 그 피어에게서 받는다)."""
+    대기열에 들어온 뒤에 친구나 검증된 ID 가 이미 받은 문서는 건너뛴다(P2P 작업자가 중계소에서 받는다)."""
     now = time.time()
     if share and random.random() < p2p.AUDIT_SHARE:
         t = p2p.audit_candidate(q)  # P2P 로 받은 문서를 나무위키에서 직접 받아 맞춰 본다(사보타주 검증)
@@ -170,7 +170,7 @@ def next_title(q, share=False, trust_any=False):
         if row and now - row[0] < COOLDOWN:
             q.execute("delete from queue where title = ?", (title,))  # 쿨다운 중이면 버린다
             continue
-        if share and p2p.trusted_copy(q, title, trust_any, since=(added or now) - 60):
+        if share and p2p.trusted_copy(q, title, since=(added or now) - 60):
             continue
         return title
     return None
@@ -288,7 +288,6 @@ def main():
     ap.add_argument("--queue-only", action="store_true",
                     help="최근 변경은 따라가지 않고 대기열(갱신 단추로 요청한 문서)만 처리")
     ap.add_argument("--p2p", action="store_true", help="받은 문서를 다른 유어위키와 나눈다(p2p.py 와 함께)")
-    ap.add_argument("--p2p-trust-any", action="store_true")
     ap.add_argument("--classmap", default=os.path.join(os.path.dirname(__file__), "..", "assets", "classmap.json"))
     args = ap.parse_args()
 
@@ -309,7 +308,7 @@ def main():
                 if not args.queue_only and time.time() - last_rc > RC_EVERY:
                     poll_recent(f, q)
                     last_rc = time.time()
-                title = next_title(q, args.p2p, args.p2p_trust_any)
+                title = next_title(q, args.p2p)
                 if title:
                     refresh(f, q, args.wiki_dir, size_map, title, args.p2p)
                 else:

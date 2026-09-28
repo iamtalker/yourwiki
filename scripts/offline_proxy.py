@@ -208,7 +208,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     upstream = ("127.0.0.1", 3001)
     cdn_dir = ""
     queue_db = ""
-    p2p = False
+    hub = False
 
     COOLDOWN = 24 * 3600
 
@@ -310,17 +310,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _p2p(self):
-        """다른 유어위키가 문서를 나눠 받는 주소(/_p2p/, p2p.py 참고). 읽기 전용이고 JSON 만 돌려준다."""
-        import p2p
+    def _hub(self):
+        """중계소(/_hub/, hub.py 참고): 유어위키들이 보낸 서명된 문서 묶음을 모아 나눠 준다. JSON 만 주고받는다."""
+        import hub
         u = urllib.parse.urlsplit(self.path)
-        length = min(int(self.headers.get("Content-Length") or 0), 4096)
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 64 << 20:
+            self.send_error(413)
+            return
         body = self.rfile.read(length) if length else b""
-        db = sqlite3.connect(self.queue_db, timeout=30)
-        try:
-            code, obj = p2p.serve(db, self.command, u.path, urllib.parse.parse_qs(u.query), body)
-        finally:
-            db.close()
+        code, obj = hub.handle(hub.db_path_for(self.queue_db), self.command, u.path,
+                               urllib.parse.parse_qs(u.query), body)
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -331,8 +331,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def _proxy(self):
-        if self.path.startswith("/_p2p/") and self.p2p and self.queue_db:
-            return self._p2p()
+        if self.path.startswith("/_hub/") and self.hub and self.queue_db:
+            return self._hub()
         if self.path.startswith("/_kit/cdn/"):
             return self._serve_cdn()
         if self.path.startswith("/_kit/suggest") and self.queue_db:
@@ -398,10 +398,10 @@ def main():
     ap.add_argument("--listen", default="127.0.0.1:3000")
     ap.add_argument("--upstream", default="127.0.0.1:3001")
     ap.add_argument("--queue-db", default="", help="갱신 대기열(wiki/updater.db). 주면 갱신 단추가 생긴다")
-    ap.add_argument("--p2p", action="store_true", help="받은 문서를 다른 유어위키에 나눠 준다(/_p2p/)")
+    ap.add_argument("--hub", action="store_true", help="중계소를 연다(/_hub/, 고정 주소가 있는 서버에서만 의미 있음)")
     args = ap.parse_args()
-    Handler.p2p = args.p2p
-    if args.p2p:
+    Handler.hub = args.hub
+    if args.hub:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     host, port = args.listen.rsplit(":", 1)
     uhost, uport = args.upstream.rsplit(":", 1)

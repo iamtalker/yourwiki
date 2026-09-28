@@ -10,8 +10,9 @@ services:
       COLOR: "${COLOR:-#3b5bdb}"   # 위키 머리글 색
       EDITION: "${EDITION:-}"      # 비우면 2026판, 2021 이면 공식 덤프 원문
       P2P: "${P2P:-off}"            # on 이면 다른 유어위키와 받은 문서를 나눔
-      P2P_URL: "${P2P_URL:-}"       # 다른 위키가 이 서버를 찾아올 공개 주소(https://...)
-      P2P_PEERS: "${P2P_PEERS:-}"   # 믿는 피어 주소(쉼표로 구분)
+      P2P_HUBS: "${P2P_HUBS:-}"     # 중계소 주소(쉼표로 구분, 비우면 기본 중계소)
+      P2P_FRIENDS: "${P2P_FRIENDS:-}" # 친구 ID(쉼표로 구분)
+      HUB: "${HUB:-off}"            # on 이면 이 서버를 중계소로도 연다(고정 도메인 + HTTPS 필요)
     volumes:
       - ./yourwiki-data/wiki:/kit/wiki   # 위키 DB (약 35GB)
       - ./yourwiki-data/data:/kit/data   # 받은 원본 (약 5GB)
