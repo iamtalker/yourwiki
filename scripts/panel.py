@@ -92,7 +92,7 @@ def start_wiki():
 
 def stop_wiki():
     with lock:
-        for n in ("updater", "proxy", "engine"):
+        for n in ("tunnel", "updater", "proxy", "engine"):
             stop(n)
     return "껐습니다"
 
@@ -107,6 +107,53 @@ def run_install(edition):
     spawn("install", ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                       os.path.join(SCRIPTS, "install.ps1"), "-Edition", edition], "install.log")
     return "설치를 시작했습니다"
+
+
+def ensure_cloudflared():
+    """터널 프로그램(cloudflared)을 공식 배포처에서 받아 SHA-256 으로 검증한다."""
+    import hashlib
+    import urllib.request
+    exe = os.path.join(ROOT, "tools", "cloudflared.exe")
+    t = json.load(open(os.path.join(ROOT, "sources.json"), encoding="utf-8"))["tools"]["cloudflared"]
+    def ok():
+        return os.path.exists(exe) and hashlib.sha256(open(exe, "rb").read()).hexdigest() == t["sha256"]
+    if not ok():
+        urllib.request.urlretrieve(t["url"], exe)
+        if not ok():
+            os.remove(exe)
+            raise RuntimeError("터널 프로그램 해시가 맞지 않습니다")
+    return exe
+
+
+def tunnel(on):
+    if not on:
+        stop("tunnel")
+        _cache.pop("url", None)
+        return "공개를 껐습니다"
+    if not WIN:
+        return "리눅스 서버는 server/yourwiki.sh 를 쓰세요"
+    if not alive("proxy"):
+        return "먼저 위키를 켜세요"
+    if alive("tunnel"):
+        return "이미 공개 중입니다"
+    try:
+        exe = ensure_cloudflared()
+    except Exception as e:
+        return f"터널 프로그램을 받지 못했습니다: {e}"
+    open(os.path.join(ROOT, "tunnel.log"), "w").close()
+    spawn("tunnel", [exe, "tunnel", "--no-autoupdate", "--url", "http://" + settings()["listen"]], "tunnel.log")
+    return "공개를 시작했습니다. 잠시 뒤 공개 주소가 표시됩니다"
+
+
+def tunnel_url():
+    import re
+    if not alive("tunnel"):
+        return ""
+    for line in tail("tunnel.log", 200):
+        m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+        if m:
+            return m.group(0)
+    return ""
 
 
 def tail(name, n=12):
@@ -153,6 +200,8 @@ def status():
     st["disk_free_gb"] = round(du.free / 1e9, 1)
     st["install_log"] = tail("install.log")
     st["updater_log"] = tail("updater.log", 8)
+    st["running"]["tunnel"] = alive("tunnel")
+    st["public_url"] = tunnel_url()
     return st
 
 
@@ -176,6 +225,12 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
 <div id="sync"></div><pre id="ulog"></pre></section>
+<section><h2>인터넷에 공개</h2>
+<button onclick="pub(1)">공개하기</button><button onclick="act2('tunnel?on=0')">공개 끄기</button>
+<div id="pubinfo" style="margin:6px 0;font-weight:bold"></div>
+<p style="font-size:13px;color:#555">공유기 설정 없이 Cloudflare 임시 공개 주소(https)를 만듭니다. 켤 때마다 주소가 바뀝니다.<br>
+<b>공개 전에</b>: 위키에서 먼저 가입해 관리자가 되고, 관리자 설정 → 권한에서 비로그인(ip) 사용자의 편집을 막으세요.
+공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></section>
 <section><h2>설치 · 데이터</h2>
 <button onclick="install('2026')">설치 / 다시 설치</button>
 <p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="ilog"></pre></section>
@@ -183,6 +238,8 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 let listen="127.0.0.1:3000";
 async function api(p){const r=await fetch(p,{method:'POST'});return (await r.json()).msg}
 async function act(a){alert(await api('/api/'+a));load()}
+async function act2(p){alert(await api('/api/'+p));load()}
+async function pub(){if(confirm('위키를 인터넷에 공개할까요? 누구나 주소로 접속할 수 있게 됩니다.')){act2('tunnel?on=1')}}
 async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 수 있습니다.')){alert(await api('/api/install?edition='+e));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4','_blank')}
@@ -195,7 +252,8 @@ dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);
 document.getElementById('sync').textContent='대기열 '+s.queue+'개 · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
-document.getElementById('ilog').textContent=s.install_log.join('')}
+document.getElementById('ilog').textContent=s.install_log.join('');
+document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
 load();setInterval(load,3000);
 </script></html>"""
 
@@ -227,6 +285,8 @@ class Handler(BaseHTTPRequestHandler):
             msg = start_wiki()
         elif u.path == "/api/stop":
             msg = stop_wiki()
+        elif u.path == "/api/tunnel":
+            msg = tunnel((q.get("on") or ["1"])[0] == "1")
         elif u.path == "/api/install":
             msg = run_install((q.get("edition") or ["2026"])[0])
         elif u.path == "/api/sync":
