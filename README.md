@@ -66,33 +66,24 @@ openNAMU 가 원래 CDN·유튜브·트위터 등에서 불러오던 것을 중�
   보충 틀을 원하지 않으면 `scriptsinstall.ps1 -NoExtras` 로 설치하세요.
 - **이미지가 없습니다.** 텍스트만 다룹니다. 나무위키 이미지는 대부분 CC 라이선스가 아닙니다.
 
-## 리눅스 서버에 직접 설치하기 (서버를 다뤄 본 사람용)
+## 리눅스 서버에 설치하기 (베타)
 
-자동 설치 스크립트는 아직 윈도우용뿐이지만, 부품은 모두 리눅스에서 그대로 돌아갑니다.
-필요한 것: python3(3.8 이상), 7z(p7zip), wget, 디스크 70GB 이상.
+서버(보통 리눅스)에 올리려는 사람을 위한 스크립트가 `server/` 에 있습니다.
+필요한 것: python3(3.8 이상), 7z(p7zip-full), curl, 디스크 45GB 이상.
 
 ```bash
 git clone https://github.com/iamtalker/yourwiki yourwiki-kit && cd yourwiki-kit
-mkdir -p wiki data
-wget -O wiki/main.bin https://github.com/openNAMU/openNAMU/releases/download/v4.3.6-beta.2/main.amd64.bin
-chmod +x wiki/main.bin
-wget -c -P data https://archive.org/download/namuwiki-namumark-20260829/namuwiki_20260829_namumark.7z
-md5sum data/namuwiki_20260829_namumark.7z   # sources.json 의 md5 와 비교
-
-# 1) openNAMU 를 한 번 켰다 꺼서 빈 DB 를 만든다
-(cd wiki && timeout 20 ./main.bin 3001 --localhost; true)
-# 2) 문서 넣기(수십 분) → 보충 틀 넣기
-python3 scripts/import_dump.py data/namuwiki_20260829_namumark.7z wiki --7z 7z --dump-date 2026-08-29
-for f in extras/*.jsonl.gz; do python3 scripts/import_templates.py "$f" wiki; done
-# 3) 실행: openNAMU 는 내부 포트, 중계 서버가 바깥 포트(외부 접속 차단·광고 없는 화면)
-(cd wiki && nohup ./main.bin 3001 --localhost > server.log 2>&1 &)
-nohup python3 scripts/offline_proxy.py assets --listen 0.0.0.0:3000 --upstream 127.0.0.1:3001 > proxy.log 2>&1 &
+bash server/install.sh                  # 엔진·데이터 받기, 해시 검증, 문서 넣기 (끊겨도 다시 실행하면 이어서)
+bash server/yourwiki.sh start           # 켜기 (0.0.0.0:3000, 나무위키 동기화 자동)
+bash server/yourwiki.sh status          # 상태
+sudo bash server/yourwiki.sh install-service   # 부팅 때 자동 시작(systemd)
 ```
 
-- 처음 켤 때 openNAMU 가 검색 색인을 만듭니다(문서가 많아 몇 시간, CPU 사용 많음). 그동안에도 문서는 볼 수 있습니다.
+- 바깥 주소·동기화는 환경 변수로 바꿉니다: `LISTEN=127.0.0.1:3000 SYNC=queue bash server/yourwiki.sh start`
+- 처음 켤 때 검색 색인을 만드느라 오래 걸리고 CPU 를 많이 씁니다. 그동안에도 문서는 볼 수 있습니다.
 - HTTPS 는 nginx·Caddy 같은 역방향 프록시를 3000번 앞에 두면 됩니다.
-- 상시 실행은 systemd 서비스로 두 명령을 등록하세요.
 - 첫 가입자가 관리자가 됩니다. 공개 전에 편집 권한(누구나/가입자만/읽기 전용)을 관리자 설정에서 정하세요.
+- 이 스크립트들은 아직 실제 리눅스 서버에서 충분히 시험하지 않았습니다. 문제가 있으면 이슈로 알려 주세요.
 
 ## 인터넷에 공개하려면
 

@@ -7,3 +7,4 @@ wiki_*/
 panel.json
 __pycache__/
 *.pyc
+run/
