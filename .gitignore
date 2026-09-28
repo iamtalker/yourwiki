@@ -1,0 +1,9 @@
+# 설치하면서 생기는 것
+tools/
+data/
+wiki/
+wiki_*/
+*.log
+panel.json
+__pycache__/
+*.pyc
