@@ -120,6 +120,8 @@ def theme_css():
                          ".top_cel_in{background:#fff!important;border:1px solid #ddd;box-shadow:0 4px 12px rgba(0,0,0,.12)}"
                          ".top_cel_in a{color:#222!important}.top_cel_in a:hover{background-color:#eef!important}"
                          f".kit-badge{{background:{color}!important}}"
+                         f"#nav_bar{{background-color:{color}!important}}#nav_bar a{{color:#fff!important}}"
+                         f"#nav_bar a:hover{{background-color:{darker(color)}!important}}"
                          "</style>")
         _theme["mtime"] = mtime
     return _theme["css"]
