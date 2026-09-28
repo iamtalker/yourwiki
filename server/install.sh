@@ -73,8 +73,7 @@ else
 fi
 for f in extras/*.jsonl.gz; do PYTHONUTF8=1 python3 scripts/import_templates.py "$f" wiki; done
 PYTHONUTF8=1 python3 scripts/add_frontpage.py wiki
-printf '{"edition": "%s", "date": "%s"}
-' "${EDITION:-default}" "$DATE" > wiki/edition.json
+echo "{\"edition\": \"${EDITION:-default}\", \"date\": \"$DATE\"}" > wiki/edition.json
 
 step "6/6 설치 완료"
 cat <<'MSG'
