@@ -88,17 +88,42 @@ def rewrite_html(body):
     return body.replace("</body>", KIT_NOTICE + "</body>", 1)
 
 
-# 유어위키 색 (나무위키의 녹색과 구분되는 인디고 블루). 스킨 파일 대신 여기서 덧씌운다.
-THEME = {"main": "#3b5bdb", "hover": "#364fc7", "soft": "#edf2ff", "menu_hover": "#dbe4ff"}
-THEME_CSS = ("<style>"
-             f"header#main{{background-color:{THEME['main']}!important}}"
-             "header#main a,header#main a#logo{color:#fff!important}"
-             f"header#main a:hover,header a#logo:hover,.top_cel a:hover{{background-color:{THEME['hover']}!important}}"
-             "header#section{background-color:#fff}"  # 제목 영역은 색 없이(다크 모드는 스킨이 덮어씀)
-             ".top_cel_in{background:#fff!important;border:1px solid #dbe4ff;box-shadow:0 4px 12px rgba(0,0,0,.12)}"
-             ".top_cel_in a{color:#222!important}"
-             f".top_cel_in a:hover{{background-color:{THEME['menu_hover']}!important}}"
-             "</style>")
+# 유어위키 색: 관리판에서 고른 색(panel.json 의 "color")을 상단 머리글에만 입힌다. 파일이 바뀌면 곧바로 반영.
+PANEL_JSON = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "panel.json")
+DEFAULT_COLOR = "#3b5bdb"
+_theme = {"mtime": None, "css": ""}
+
+
+def darker(hex_color, f=0.88):
+    h = hex_color.lstrip("#")
+    return "#%02x%02x%02x" % tuple(int(int(h[i:i + 2], 16) * f) for i in (0, 2, 4))
+
+
+def theme_css():
+    try:
+        mtime = os.path.getmtime(PANEL_JSON)
+    except OSError:
+        mtime = 0
+    if mtime != _theme["mtime"]:
+        color = DEFAULT_COLOR
+        try:
+            c = json.load(open(PANEL_JSON, encoding="utf-8")).get("color", DEFAULT_COLOR)
+            if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
+                color = c
+        except (OSError, ValueError):
+            pass
+        _theme["css"] = ("<style>"
+                         f"header#main{{background-color:{color}!important}}"
+                         "header#main a,header#main a#logo{color:#fff!important}"
+                         f"header#main a:hover,header a#logo:hover,.top_cel a:hover{{background-color:{darker(color)}!important}}"
+                         "header#section{background-color:#fff}"
+                         ".top_cel_in{background:#fff!important;border:1px solid #ddd;box-shadow:0 4px 12px rgba(0,0,0,.12)}"
+                         ".top_cel_in a{color:#222!important}.top_cel_in a:hover{background-color:#eef!important}"
+                         f".kit-badge{{background:{color}!important}}"
+                         "</style>")
+        _theme["mtime"] = mtime
+    return _theme["css"]
+
 
 LAYOUT_JS = """<script>(function(){
 /* 목록·도구·사용자 메뉴를 오른쪽에서 왼쪽 로고(유어위키) 옆으로 옮긴다. 검색창은 오른쪽에 둔다. */
@@ -123,7 +148,7 @@ timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q
 
 def add_suggest(body):
     """모든 페이지의 검색창에 제목 자동완성을 붙인다."""
-    body = body.replace("</head>", THEME_CSS + "</head>", 1)
+    body = body.replace("</head>", theme_css() + "</head>", 1)
     return body.replace("</body>", LAYOUT_JS + SUGGEST_JS + "</body>", 1)
 
 
@@ -153,8 +178,8 @@ def refresh_button(body, path, queue_db=""):
         t = time.localtime(at)
         when = time.strftime("%H:%M", t) if time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d") \
             else time.strftime("%m/%d %H:%M", t)
-        badge = ('<span title="24시간 안에 나무위키에서 확인한 문서입니다" '
-                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#4c6ef5;color:#fff;'
+        badge = ('<span class="kit-badge" title="24시간 안에 나무위키에서 확인한 문서입니다" '
+                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;color:#fff;'
                  'font-size:13px;padding:7px 12px;border-radius:18px;box-shadow:0 2px 6px rgba(0,0,0,.25)">'
                  f'✔ 최신 버전 ({"오늘 " if ":" in when and "/" not in when else ""}{when} 확인)</span>')
         m = re.search(r"<body[^>]*>", body)

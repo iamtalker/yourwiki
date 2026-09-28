@@ -35,7 +35,7 @@ def settings():
     try:
         return json.load(open(SETTINGS, encoding="utf-8"))
     except Exception:
-        return {"sync": "auto", "listen": "127.0.0.1:3000"}
+        return {"sync": "auto", "listen": "127.0.0.1:3000", "color": "#3b5bdb"}
 
 
 def save_settings(s):
@@ -184,6 +184,7 @@ def port_open(port):
 def status():
     s = settings()
     st = {"installed": os.path.exists(os.path.join(WIKI, "data.db")), "sync": s["sync"], "listen": s["listen"],
+          "color": s.get("color", "#3b5bdb"),
           "running": {n: alive(n) for n in ("engine", "proxy", "updater", "install")}}
     st["ready"] = st["running"]["engine"] and port_open(3001)
     # 위키 엔진이 켜져 있을 때는 data.db 를 열지 않는다.
@@ -233,6 +234,16 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
 <div id="sync"></div><pre id="ulog"></pre></section>
+<section><h2>위키 색</h2>
+<span id="swatch" style="display:inline-block;width:28px;height:28px;border-radius:6px;vertical-align:middle;border:1px solid #ccc"></span>
+<select id="preset" onchange="if(this.value)setColor(this.value)">
+<option value="">추천 색 고르기…</option>
+<option value="#3b5bdb">인디고 블루 (기본)</option><option value="#1c3f94">딥 오션</option><option value="#1971c2">코발트</option>
+<option value="#364fc7">로열 블루</option><option value="#5f3dc4">바이올렛</option><option value="#862e9c">자두</option>
+<option value="#c2255c">라즈베리</option><option value="#c92a2a">레드</option><option value="#e8590c">오렌지</option>
+<option value="#343a40">차콜</option><option value="#212529">블랙</option></select>
+<input type="color" id="picker" onchange="setColor(this.value)" title="원하는 색 직접 고르기">
+<span style="font-size:13px;color:#555">위키 맨 위 머리글 색입니다. 고르면 새로고침만으로 바로 바뀝니다.</span></section>
 <section><h2>인터넷에 공개</h2>
 <button onclick="pub(1)">공개하기</button><button onclick="act2('tunnel?on=0')">공개 끄기</button>
 <div id="pubinfo" style="margin:6px 0;font-weight:bold"></div>
@@ -248,6 +259,7 @@ async function api(p){const r=await fetch(p,{method:'POST'});return (await r.jso
 async function act(a){alert(await api('/api/'+a));load()}
 async function act2(p){alert(await api('/api/'+p));load()}
 async function pub(){if(confirm('위키를 인터넷에 공개할까요? 누구나 주소로 접속할 수 있게 됩니다.')){act2('tunnel?on=1')}}
+async function setColor(c){await api('/api/color?c='+encodeURIComponent(c));load()}
 async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 수 있습니다.')){alert(await api('/api/install?edition='+e));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
@@ -261,6 +273,7 @@ document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sy
 document.getElementById('sync').textContent='대기열 '+s.queue+'개 · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
 document.getElementById('ilog').textContent=s.install_log.join('');
+document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
 load();setInterval(load,3000);
 </script></html>"""
@@ -293,6 +306,16 @@ class Handler(BaseHTTPRequestHandler):
             msg = start_wiki()
         elif u.path == "/api/stop":
             msg = stop_wiki()
+        elif u.path == "/api/color":
+            import re
+            c = (q.get("c") or [""])[0]
+            if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
+                st = settings()
+                st["color"] = c
+                save_settings(st)
+                msg = "색을 바꿨습니다. 위키 페이지를 새로고침하세요"
+            else:
+                msg = "색 형식이 올바르지 않습니다"
         elif u.path == "/api/tunnel":
             msg = tunnel((q.get("on") or ["1"])[0] == "1")
         elif u.path == "/api/install":
