@@ -206,15 +206,19 @@ def set_p2p(on=None, peers=None, trust_any=None):
 
 
 def p2p_status():
-    out = {"peers": 0, "alive": 0, "shared": 0, "received_today": 0}
+    out = {"peers": 0, "alive": 0, "shared": 0, "received_today": 0, "banned": 0, "audits_ok": 0, "unaudited": 0}
     try:
         q = sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5)
         now = time.time()
         out["peers"] = q.execute("select count(*) from peers").fetchone()[0]
-        out["alive"] = q.execute("select count(*) from peers where last_ok > ?", (now - 600,)).fetchone()[0]
+        out["alive"] = q.execute("select count(*) from peers where last_ok > ? and banned = 0",
+                                 (now - 600,)).fetchone()[0]
         out["shared"] = q.execute("select count(*) from shared").fetchone()[0]
         out["received_today"] = q.execute("select count(*) from shared where src = 'p2p' and at > ?",
                                           (now - 86400,)).fetchone()[0]
+        out["banned"] = q.execute("select count(*) from peers where banned = 1").fetchone()[0]
+        out["audits_ok"] = q.execute("select coalesce(sum(audits_ok), 0) from peers").fetchone()[0]
+        out["unaudited"] = q.execute("select count(*) from shared where src = 'p2p' and audited = 0").fetchone()[0]
         q.close()
     except sqlite3.Error:
         pass
@@ -225,7 +229,7 @@ EXPORT_DIR = os.path.join(ROOT, "export")
 
 
 def run_export(target):
-    if target not in ("mediawiki", "dokuwiki"):
+    if target not in ("mediawiki", "dokuwiki", "markdown"):
         return "알 수 없는 형식입니다"
     if alive("export"):
         return "이미 내보내는 중입니다"
@@ -236,7 +240,7 @@ def run_export(target):
     os.makedirs(EXPORT_DIR, exist_ok=True)
     open(os.path.join(ROOT, "export.log"), "w").close()
     spawn("export", [sys.executable, os.path.join(SCRIPTS, "convert_wiki.py"), WIKI, "--to", target], "export.log")
-    return "내보내기를 시작했습니다. 문서가 많아 한 시간 가까이 걸릴 수 있습니다"
+    return "내보내기를 시작했습니다. 남은 시간은 진행 줄에 표시됩니다(전체 문서면 CPU 4개 기준 약 1시간)"
 
 
 def tunnel_url():
@@ -251,6 +255,15 @@ def tunnel_url():
 
 
 KIT_VERSION = "1.2"
+
+
+def fmt_secs(sec):
+    sec = int(sec)
+    if sec < 3600:
+        return f"{max(1, sec // 60)}분"
+    if sec < 86400:
+        return f"{sec // 3600}시간 {sec % 3600 // 60}분"
+    return f"{sec // 86400}일 {sec % 86400 // 3600}시간"
 
 
 def dir_size(path):
@@ -324,6 +337,14 @@ def status():
         q = sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5)
         st["queue"] = q.execute("select count(*) from queue").fetchone()[0]
         st["fetched_today"] = q.execute("select count(*) from fetched where at > ?", (time.time() - 86400,)).fetchone()[0]
+        # 대기열을 비우는 데 걸릴 시간: 나무위키 6초에 1건 + 최근 1시간 동안 P2P 로 받은 속도
+        try:
+            p2p_rate = q.execute("select count(*) from shared where src = 'p2p' and at > ?",
+                                 (time.time() - 3600,)).fetchone()[0] / 3600
+        except sqlite3.Error:
+            p2p_rate = 0
+        rate = (1 / 6 if s["sync"] != "off" else 0) + p2p_rate
+        st["queue_eta"] = fmt_secs(st["queue"] / rate) if rate and st["queue"] else ""
         q.close()
     except Exception:
         st["queue"] = st["fetched_today"] = 0
@@ -375,7 +396,9 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <label style="margin-left:12px"><input type="checkbox" id="trustany" onchange="api('/api/p2p?trust_any='+(this.checked?1:0)).then(load)">
 찾은 피어 한 곳만으로도 받기 (빠르지만 위험)</label></div>
 <p style="font-size:12px;color:#a60">믿는 피어가 준 문서는 바로 받습니다. 서로 알려 주다 찾은 피어는, 서로 다른 두 곳 이상이 나무위키에서 직접 받은
-같은 내용일 때만 받습니다(엉터리 내용이 끼어드는 것을 막기 위해). P2P 로 받은 문서는 역사에 어느 피어에서 왔는지 남습니다.</p>
+같은 내용일 때만 받습니다. <b>사보타주 방지</b>: 갱신기가 P2P 로 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고,
+거짓 내용이 확인되면 그 피어를 차단하고 그 피어에게서 받은 문서를 모두 되돌립니다. 새 피어는 검증 5건을 통과할 때까지 한 시간에 100개까지만 받고,
+내 문서와 절반 넘게 다른 내용은 P2P 로 받지 않고 나무위키에서 직접 확인합니다.</p>
 <div id="p2pst"></div><pre id="plog"></pre></section>
 <section><h2>위키 색</h2>
 <span id="swatch" style="display:inline-block;width:28px;height:28px;border-radius:6px;vertical-align:middle;border:1px solid #ccc"></span>
@@ -395,9 +418,13 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></section>
 <section><h2>다른 위키로 내보내기</h2>
 <button onclick="exp('mediawiki')">MediaWiki 로 내보내기</button><button onclick="exp('dokuwiki')">DokuWiki 로 내보내기</button>
+<button onclick="exp('markdown')">Markdown 으로 내보내기</button>
+<div id="eprog" style="margin:6px 0;font-weight:bold"></div>
 <p style="font-size:13px;color:#555">위키의 모든 문서를 다른 위키 엔진에 넣을 수 있는 파일로 바꿔 <span id="expdir"></span> 폴더에 저장합니다.<br>
 MediaWiki: <code>yourwiki-mediawiki.xml.gz</code> → <code>php maintenance/run.php importDump</code> 로 가져옵니다.<br>
 DokuWiki: <code>yourwiki-dokuwiki.zip</code> → DokuWiki 폴더에 풀고 <code>php bin/indexer.php</code> 로 색인을 만듭니다.<br>
+Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나. Obsidian 같은 편집기에서 폴더째 엽니다.<br>
+전체 문서(약 180만 개)는 CPU 4개 PC 기준 약 1시간, 디스크는 3~10GB 가 필요합니다. 진행 중에는 남은 시간이 표시됩니다.<br>
 표·목록·각주·접기·틀 등 흔한 문법을 옮기고, 이미지와 #!html 은 옮기지 않습니다. 모든 문서의 출처·라이선스 고지는 그대로 남으니 지우지 마세요(CC BY-NC-SA 2.0 KR).</p>
 <pre id="elog"></pre></section>
 <section><h2>설치 · 데이터</h2>
@@ -426,12 +453,16 @@ var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.
 if(document.activeElement.id!=='peers')document.getElementById('peers').value=p.peers_list.join('\n');
 document.getElementById('trustany').checked=p.trust_any;
 document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · 아는 피어 '+p.peers+'곳 (응답 중 '+p.alive+'곳) · 나눠 줄 수 있는 문서 '+
-p.shared+'개 · 최근 24시간 P2P로 받은 문서 '+p.received_today+'개'+(s.public_url?'':' · <b>공개 주소 없음: 받기만 합니다</b>')):'';
+p.shared+'개 · 최근 24시간 P2P로 받은 문서 '+p.received_today+'개'+(s.public_url?'':' · <b>공개 주소 없음: 받기만 합니다</b>')+
+'<br><span style="font-size:13px">사보타주 검증: 통과 '+p.audits_ok+'건 · 검증 대기 '+p.unaudited+'건 · 차단한 피어 '+
+(p.banned?'<b style="color:#c00">'+p.banned+'곳</b>':'0곳')+'</span>'):'';
 document.getElementById('plog').textContent=p.on?p.log.join(''):'';
-document.getElementById('sync').textContent='대기열 '+s.queue+'개 · 최근 24시간 받은 문서 '+s.fetched_today+'개';
+document.getElementById('sync').textContent='대기열 '+s.queue+'개'+(s.queue_eta?' (지금 속도면 약 '+s.queue_eta+' 뒤 비움)':'')+' · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
 document.getElementById('ilog').textContent=s.install_log.join('');
-document.getElementById('elog').textContent=(s.running.export?'내보내는 중…\n':'')+s.export_log.join('');
+document.getElementById('elog').textContent=s.export_log.join('');
+var pl=s.export_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')).pop();
+document.getElementById('eprog').textContent=s.running.export?('내보내는 중 · '+(pl||'준비 중…')):(pl&&pl.startsWith('완료')?pl:'');
 document.getElementById('expdir').textContent=s.export_dir;
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}

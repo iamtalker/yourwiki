@@ -16,6 +16,7 @@ import argparse
 import html as htmlmod
 import json
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -43,6 +44,10 @@ LICENSE_URL = "https://creativecommons.org/licenses/by-nc-sa/2.0/kr/"
 
 class Stop(Exception):
     """멈춰야 하는 상황(차단, robots 금지 등)."""
+
+
+class Retry(Exception):
+    """네트워크 문제(끊김, 시간 초과 등). 차단이 아니므로 잠시 뒤 다시 시도한다."""
 
 
 class Forbidden(Exception):
@@ -94,8 +99,13 @@ class Fetcher:
         if self.robots and time.time() - self.robots_at < ROBOTS_EVERY:
             return
         req = urllib.request.Request(BASE + "/robots.txt", headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            txt = r.read().decode("utf-8", "replace")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                txt = r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            raise Stop(f"robots.txt 를 읽지 못함(HTTP {e.code}) → 중단")
+        except (urllib.error.URLError, OSError) as e:
+            raise Retry(f"robots.txt 연결 실패: {getattr(e, 'reason', e)}")
         for path in ("/w/%EB%82%98%EB%AC%B4", "/RecentChanges"):
             if not self.allowed(txt, path):
                 raise Stop(f"robots.txt 가 {path} 를 금지함 → 중단")
@@ -120,6 +130,8 @@ class Fetcher:
                     raise Stop(f"서로 다른 문서에서 연달아 403 → 차단으로 보고 중단 (마지막: {path})")
                 raise Forbidden(path)
             raise Stop(f"HTTP {e.code} ({path}) → 차단 가능성, 중단")
+        except (urllib.error.URLError, OSError) as e:
+            raise Retry(f"연결 실패 ({path}): {getattr(e, 'reason', e)}")
         self.forbidden = 0
         low = body[:20000].lower()
         if any(k in low for k in ("captcha-challenge", "cf-chl", "just a moment", "g-recaptcha\"", "hcaptcha-box")):
@@ -148,6 +160,10 @@ def next_title(q, share=False, trust_any=False):
     """다음에 받을 문서. share(P2P)면 같은 우선순위 안에서 순서를 섞어 피어마다 다른 문서를 받게 하고,
     대기열에 들어온 뒤에 믿을 만한 피어가 이미 받은 문서는 건너뛴다(P2P 작업자가 그 피어에게서 받는다)."""
     now = time.time()
+    if share and random.random() < p2p.AUDIT_SHARE:
+        t = p2p.audit_candidate(q)  # P2P 로 받은 문서를 나무위키에서 직접 받아 맞춰 본다(사보타주 검증)
+        if t:
+            return t
     order = "priority desc, random()" if share else "priority desc, added asc"
     for title, added in q.execute(f"select title, added from queue order by {order}").fetchall():
         row = q.execute("select at from fetched where title = ?", (title,)).fetchone()
@@ -234,6 +250,10 @@ def refresh(f, q, wiki_dir, size_map, title, share=False):
     m = MODIFIED_RE.search(re.sub(r"<!--.*?-->", "", body))
     modified = m.group(1) if m else ""
     text, info = html2namu.convert(body, size_map, title)
+    if share:
+        verdict = p2p.audit(q, wiki_dir, title, text, info.get("redirect"), modified)
+        if verdict:
+            log(f"P2P 검증 {({'ok': '통과', 'bad': '거짓 내용 → 피어 차단', 'unknown': '판단 불가'})[verdict]}: {title}")
     changed = apply(wiki_dir, title, text, info, modified)
     if share and modified:
         p2p.record(q, title, text, info.get("redirect"), modified, "namu")
@@ -283,19 +303,29 @@ def main():
             return
         if not args.watch:
             ap.error("--doc 또는 --watch 가 필요합니다")
-        last_rc = 0.0
+        last_rc, fails = 0.0, 0
         while True:
-            if not args.queue_only and time.time() - last_rc > RC_EVERY:
-                poll_recent(f, q)
-                last_rc = time.time()
-            title = next_title(q, args.p2p, args.p2p_trust_any)
-            if title:
-                refresh(f, q, args.wiki_dir, size_map, title, args.p2p)
-            else:
-                time.sleep(10)
+            try:
+                if not args.queue_only and time.time() - last_rc > RC_EVERY:
+                    poll_recent(f, q)
+                    last_rc = time.time()
+                title = next_title(q, args.p2p, args.p2p_trust_any)
+                if title:
+                    refresh(f, q, args.wiki_dir, size_map, title, args.p2p)
+                else:
+                    time.sleep(10)
+                fails = 0
+            except Retry as e:
+                fails += 1
+                wait = min(1800, 30 * 2 ** min(fails, 6))
+                log(f"{e} → {wait}초 뒤 다시 시도 (인터넷 연결을 확인하세요)")
+                time.sleep(wait)
     except Stop as e:
         log(f"중단: {e}")
         sys.exit(2)
+    except Retry as e:
+        log(f"연결 실패: {e}")
+        sys.exit(1)
     except KeyboardInterrupt:
         log("사용자가 멈춤")
 
