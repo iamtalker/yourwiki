@@ -18,6 +18,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 임베디드 파이썬은 스크립트 폴더를 path에 넣지 않음
+
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(SCRIPTS)
 WIKI = os.path.join(ROOT, "wiki")
@@ -73,7 +75,36 @@ def start_updater():
     args = [sys.executable, os.path.join(SCRIPTS, "updater.py"), WIKI, "--watch"]
     if mode == "queue":
         args.append("--queue-only")
+    if settings().get("p2p"):
+        args.append("--p2p")
+        if settings().get("p2p_trust_any"):
+            args.append("--p2p-trust-any")
     spawn("updater", args, "updater.log")
+
+
+def start_p2p():
+    """P2P 작업자: 다른 유어위키가 받은 문서를 가져온다. 공개 주소가 있으면 그 주소를 다른 위키에 알린다."""
+    stop("p2p")
+    s = settings()
+    if not s.get("p2p") or not os.path.exists(os.path.join(WIKI, "data.db")):
+        return
+    args = [sys.executable, os.path.join(SCRIPTS, "p2p.py"), WIKI, "--watch",
+            "--tunnel-log", os.path.join(ROOT, "tunnel.log")]
+    for peer in s.get("p2p_peers", []):
+        args += ["--peer", peer]
+    if s.get("p2p_trust_any"):
+        args.append("--trust-any")
+    spawn("p2p", args, "p2p.log")
+
+
+def start_proxy():
+    stop("proxy")
+    args = [sys.executable, os.path.join(SCRIPTS, "offline_proxy.py"), os.path.join(ROOT, "assets"),
+            "--listen", settings()["listen"], "--upstream", "127.0.0.1:3001",
+            "--queue-db", os.path.join(WIKI, "updater.db")]
+    if settings().get("p2p"):
+        args.append("--p2p")
+    spawn("proxy", args, "proxy.log")
 
 
 def start_wiki():
@@ -83,11 +114,11 @@ def start_wiki():
         if not alive("engine"):
             spawn("engine", [ENGINE, "3001", "--localhost"], "server.log", cwd=WIKI)
         if not alive("proxy"):
-            spawn("proxy", [sys.executable, os.path.join(SCRIPTS, "offline_proxy.py"), os.path.join(ROOT, "assets"),
-                            "--listen", settings()["listen"], "--upstream", "127.0.0.1:3001",
-                            "--queue-db", os.path.join(WIKI, "updater.db")], "proxy.log")
+            start_proxy()
         if not alive("updater"):
             start_updater()
+        if not alive("p2p"):
+            start_p2p()
 
     def open_when_ready():  # 엔진이 준비되면 첫 화면을 브라우저로 연다
         for _ in range(600):
@@ -101,7 +132,7 @@ def start_wiki():
 
 def stop_wiki():
     with lock:
-        for n in ("tunnel", "updater", "proxy", "engine"):
+        for n in ("tunnel", "p2p", "updater", "proxy", "engine"):
             stop(n)
     return "껐습니다"
 
@@ -154,6 +185,60 @@ def tunnel(on):
     return "공개를 시작했습니다. 잠시 뒤 공개 주소가 표시됩니다"
 
 
+def set_p2p(on=None, peers=None, trust_any=None):
+    s = settings()
+    if on is not None:
+        s["p2p"] = on
+    if peers is not None:
+        import p2p
+        s["p2p_peers"] = [u for u in (p2p.norm_url(x) for x in re.split(r"[\s,]+", peers)) if u]
+    if trust_any is not None:
+        s["p2p_trust_any"] = trust_any
+    save_settings(s)
+    if alive("engine"):  # 켜져 있으면 바뀐 설정으로 다시 띄운다
+        with lock:
+            start_proxy()
+            start_updater()
+            start_p2p()
+    if on is False:
+        stop("p2p")
+    return "P2P 설정을 바꿨습니다"
+
+
+def p2p_status():
+    out = {"peers": 0, "alive": 0, "shared": 0, "received_today": 0}
+    try:
+        q = sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5)
+        now = time.time()
+        out["peers"] = q.execute("select count(*) from peers").fetchone()[0]
+        out["alive"] = q.execute("select count(*) from peers where last_ok > ?", (now - 600,)).fetchone()[0]
+        out["shared"] = q.execute("select count(*) from shared").fetchone()[0]
+        out["received_today"] = q.execute("select count(*) from shared where src = 'p2p' and at > ?",
+                                          (now - 86400,)).fetchone()[0]
+        q.close()
+    except sqlite3.Error:
+        pass
+    return out
+
+
+EXPORT_DIR = os.path.join(ROOT, "export")
+
+
+def run_export(target):
+    if target not in ("mediawiki", "dokuwiki"):
+        return "알 수 없는 형식입니다"
+    if alive("export"):
+        return "이미 내보내는 중입니다"
+    if not os.path.exists(os.path.join(WIKI, "data.db")):
+        return "아직 설치되지 않았습니다"
+    if alive("engine") and not port_open(3001):
+        return "위키 엔진이 시작하는 중입니다. 준비된 뒤에 다시 누르세요"
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    open(os.path.join(ROOT, "export.log"), "w").close()
+    spawn("export", [sys.executable, os.path.join(SCRIPTS, "convert_wiki.py"), WIKI, "--to", target], "export.log")
+    return "내보내기를 시작했습니다. 문서가 많아 한 시간 가까이 걸릴 수 있습니다"
+
+
 def tunnel_url():
     import re
     if not alive("tunnel"):
@@ -165,7 +250,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "1.1.1"
+KIT_VERSION = "1.2"
 
 
 def dir_size(path):
@@ -248,7 +333,13 @@ def status():
     st["updater_log"] = tail("updater.log", 8)
     st["info"] = info()
     st["running"]["tunnel"] = alive("tunnel")
+    st["running"]["p2p"] = alive("p2p")
+    st["running"]["export"] = alive("export")
+    st["export_log"] = tail("export.log", 6)
+    st["export_dir"] = EXPORT_DIR
     st["public_url"] = tunnel_url()
+    st["p2p"] = dict(p2p_status(), on=bool(s.get("p2p")), peers_list=s.get("p2p_peers", []),
+                     trust_any=bool(s.get("p2p_trust_any")), log=tail("p2p.log", 8))
     return st
 
 
@@ -272,6 +363,20 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
 <div id="sync"></div><pre id="ulog"></pre></section>
+<section><h2>P2P 공유 (다른 유어위키와 받은 문서 나누기)</h2>
+<label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
+<label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
+<p style="font-size:13px;color:#555">갱신기는 나무위키 서버 부담 때문에 6초에 1건만 받습니다. P2P 를 켜면 참여한 유어위키들이
+<b>서로 다른 문서</b>를 받아 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).<br>
+다른 위키가 나를 찾아오려면 아래 [공개하기]로 공개 주소가 있어야 합니다. 공개하지 않으면 <b>받기만</b> 합니다.</p>
+<div style="font-size:13px">믿는 피어 주소 (한 줄에 하나, 예: 친구의 공개 주소):<br>
+<textarea id="peers" rows="3" style="width:100%;font-size:13px"></textarea>
+<button onclick="api('/api/p2p_peers?peers='+encodeURIComponent(document.getElementById('peers').value)).then(load)">피어 저장</button>
+<label style="margin-left:12px"><input type="checkbox" id="trustany" onchange="api('/api/p2p?trust_any='+(this.checked?1:0)).then(load)">
+찾은 피어 한 곳만으로도 받기 (빠르지만 위험)</label></div>
+<p style="font-size:12px;color:#a60">믿는 피어가 준 문서는 바로 받습니다. 서로 알려 주다 찾은 피어는, 서로 다른 두 곳 이상이 나무위키에서 직접 받은
+같은 내용일 때만 받습니다(엉터리 내용이 끼어드는 것을 막기 위해). P2P 로 받은 문서는 역사에 어느 피어에서 왔는지 남습니다.</p>
+<div id="p2pst"></div><pre id="plog"></pre></section>
 <section><h2>위키 색</h2>
 <span id="swatch" style="display:inline-block;width:28px;height:28px;border-radius:6px;vertical-align:middle;border:1px solid #ccc"></span>
 <select id="preset" onchange="if(this.value)setColor(this.value)">
@@ -288,6 +393,13 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <p style="font-size:13px;color:#555">공유기 설정 없이 Cloudflare 임시 공개 주소(https)를 만듭니다. 켤 때마다 주소가 바뀝니다.<br>
 <b>공개 전에</b>: 위키에서 먼저 가입해 관리자가 되고, 관리자 설정 → 권한에서 비로그인(ip) 사용자의 편집을 막으세요.
 공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></section>
+<section><h2>다른 위키로 내보내기</h2>
+<button onclick="exp('mediawiki')">MediaWiki 로 내보내기</button><button onclick="exp('dokuwiki')">DokuWiki 로 내보내기</button>
+<p style="font-size:13px;color:#555">위키의 모든 문서를 다른 위키 엔진에 넣을 수 있는 파일로 바꿔 <span id="expdir"></span> 폴더에 저장합니다.<br>
+MediaWiki: <code>yourwiki-mediawiki.xml.gz</code> → <code>php maintenance/run.php importDump</code> 로 가져옵니다.<br>
+DokuWiki: <code>yourwiki-dokuwiki.zip</code> → DokuWiki 폴더에 풀고 <code>php bin/indexer.php</code> 로 색인을 만듭니다.<br>
+표·목록·각주·접기·틀 등 흔한 문법을 옮기고, 이미지와 #!html 은 옮기지 않습니다. 모든 문서의 출처·라이선스 고지는 그대로 남으니 지우지 마세요(CC BY-NC-SA 2.0 KR).</p>
+<pre id="elog"></pre></section>
 <section><h2>설치 · 데이터</h2>
 <button onclick="install('2026')">설치 / 다시 설치</button>
 <p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="ilog"></pre></section>
@@ -299,6 +411,7 @@ async function act2(p){alert(await api('/api/'+p));load()}
 async function pub(){if(confirm('위키를 인터넷에 공개할까요? 누구나 주소로 접속할 수 있게 됩니다.')){act2('tunnel?on=1')}}
 async function setColor(c){await api('/api/color?c='+encodeURIComponent(c));load()}
 async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 수 있습니다.')){alert(await api('/api/install?edition='+e));load()}}
+async function exp(t){if(confirm('내보낼까요? 문서가 많아 오래 걸리고 디스크 공간이 수 GB 필요합니다.')){alert(await api('/api/export?to='+t));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
 function dot(b){return b?'<span class=on>●</span>':'<span class=off>○</span>'}
@@ -309,9 +422,17 @@ var i=s.info;document.getElementById('st').innerHTML=(s.installed?'설치됨 · 
 dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중</b>':'')+
 (s.running.engine?(s.ready?'<br><b class=on>위키 준비됨 — [위키 열기]를 누르세요</b>':'<br><b>위키 엔진 시작 중… (문서가 많아 몇 분 걸릴 수 있습니다)</b>'):'');
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);
+var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.value==(p.on?'1':'0'));
+if(document.activeElement.id!=='peers')document.getElementById('peers').value=p.peers_list.join('\n');
+document.getElementById('trustany').checked=p.trust_any;
+document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · 아는 피어 '+p.peers+'곳 (응답 중 '+p.alive+'곳) · 나눠 줄 수 있는 문서 '+
+p.shared+'개 · 최근 24시간 P2P로 받은 문서 '+p.received_today+'개'+(s.public_url?'':' · <b>공개 주소 없음: 받기만 합니다</b>')):'';
+document.getElementById('plog').textContent=p.on?p.log.join(''):'';
 document.getElementById('sync').textContent='대기열 '+s.queue+'개 · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
 document.getElementById('ilog').textContent=s.install_log.join('');
+document.getElementById('elog').textContent=(s.running.export?'내보내는 중…\n':'')+s.export_log.join('');
+document.getElementById('expdir').textContent=s.export_dir;
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
 load();setInterval(load,3000);
@@ -359,6 +480,14 @@ class Handler(BaseHTTPRequestHandler):
             msg = tunnel((q.get("on") or ["1"])[0] == "1")
         elif u.path == "/api/install":
             msg = run_install((q.get("edition") or ["2026"])[0])
+        elif u.path == "/api/p2p":
+            on = q.get("on", [None])[0]
+            ta = q.get("trust_any", [None])[0]
+            msg = set_p2p(on=None if on is None else on == "1", trust_any=None if ta is None else ta == "1")
+        elif u.path == "/api/p2p_peers":
+            msg = set_p2p(peers=(q.get("peers") or [""])[0])
+        elif u.path == "/api/export":
+            msg = run_export((q.get("to") or [""])[0])
         elif u.path == "/api/sync":
             s = settings()
             s["sync"] = (q.get("mode") or ["queue"])[0]
