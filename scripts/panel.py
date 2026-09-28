@@ -299,6 +299,49 @@ def info():
     return out
 
 
+ARIA_RE = re.compile(r"\[#\w+ ([\d.]+)(\w+)/([\d.]+)(\w+)\((\d+)%\)(?: CN:\d+)?(?: DL:([\d.]+)(\w+))?(?: ETA:(\w+))?\]")
+UNITS = {"B": "B", "KiB": "KB", "MiB": "MB", "GiB": "GB", "TiB": "TB"}
+
+
+def eta_ko(s):
+    """aria2 의 5h3m20s 같은 남은 시간을 한국어로."""
+    out = []
+    for num, unit in re.findall(r"(\d+)([hms])", s or ""):
+        out.append(num + {"h": "시간", "m": "분", "s": "초"}[unit])
+    return " ".join(out[:2]) or "계산 중"
+
+
+def korean_log(lines):
+    """설치 기록 중 영어로 나오는 다운로드 도구(aria2)의 진행 표시를 한국어로 바꾸고, 표 모양 잡줄은 뺀다."""
+    out = []
+    for raw in lines:
+        for line in raw.replace("\r", "\n").split("\n"):
+            t = line.strip()
+            if not t:
+                continue
+            m = ARIA_RE.search(t)
+            if m:
+                done, du, total, tu, pct, sp, su, eta = m.groups()
+                speed = f" · 속도 {sp}{UNITS.get(su, su)}/초" if sp else ""
+                out.append(f"  받는 중: {done}{UNITS.get(du, du)} / {total}{UNITS.get(tu, tu)} ({pct}%){speed}"
+                           f" · 남은 시간 약 {eta_ko(eta)}")
+                continue
+            if t.startswith(("***", "===", "---", "FILE:", "gid ", "Status Legend", "Download Results")) or \
+                    re.match(r"^\w{6}\|", t) or t.startswith("(INPR)"):
+                continue
+            if t.startswith("(OK):download completed"):
+                out.append("  받기 완료")
+                continue
+            if t.startswith("(ERR):error occurred"):
+                out.append("  받는 중 오류가 났습니다")
+                continue
+            if "Exception:" in t or "errorCode=" in t:
+                out.append("  다운로드 오류: " + t)
+                continue
+            out.append(line.rstrip() + "\n" if not line.endswith("\n") else line)
+    return [x if x.endswith("\n") else x + "\n" for x in out]
+
+
 def tail(name, n=12):
     try:
         with open(os.path.join(ROOT, name), encoding="utf-8", errors="replace") as f:
@@ -350,7 +393,7 @@ def status():
         st["queue"] = st["fetched_today"] = 0
     du = shutil.disk_usage(ROOT)
     st["disk_free_gb"] = round(du.free / 1e9, 1)
-    st["install_log"] = tail("install.log")
+    st["install_log"] = korean_log(tail("install.log", 40))[-12:]
     st["updater_log"] = tail("updater.log", 8)
     st["info"] = info()
     st["running"]["tunnel"] = alive("tunnel")

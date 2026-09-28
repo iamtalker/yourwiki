@@ -38,18 +38,18 @@ chmod +x wiki/main.bin
 echo "  완료"
 
 # sources.json 에서 판 정보 읽기
-# 첫 줄은 파일·해시(SHA-256, MD5)·날짜, 그다음 줄부터는 받을 곳(http)을 sources.json 순서대로
+# 첫 줄은 파일·해시(SHA-256, MD5)·날짜·문서 수, 그다음 줄부터는 받을 곳(http)을 sources.json 순서대로
 mapfile -t INFO < <(python3 - "$EDITION" <<'PY'
 import json, sys
 c = json.load(open("sources.json", encoding="utf-8"))
 e = c["editions"][sys.argv[1] or c["default_edition"]]
-print(e["file"], e.get("sha256", "-"), e.get("md5", "-"), e["date"])
+print(e["file"], e.get("sha256", "-"), e.get("md5", "-"), e["date"], e.get("docs", 0))
 for s in e["sources"]:
     if s["type"] == "http":
         print(s["url"])
 PY
 )
-read -r FILE SHA MD5 DATE <<< "${INFO[0]}"
+read -r FILE SHA MD5 DATE DOCS <<< "${INFO[0]}"
 URLS=("${INFO[@]:1}")
 
 step "3/6 나무위키 데이터 받기 ($DATE판)"
@@ -62,7 +62,7 @@ if ! verify; then
   OK=
   for URL in "${URLS[@]}"; do
     echo "  경로: $URL"
-    if curl -fL -C - -o "data/$FILE" "$URL"; then
+    if curl -fL -# -C - -o "data/$FILE" "$URL"; then
       if verify; then OK=1; break; fi
       echo "  해시가 맞지 않습니다. 받은 파일을 지우고 다음 경로를 시도합니다."
       rm -f "data/$FILE"
@@ -86,7 +86,7 @@ COUNT=$(python3 -c "import sqlite3;print(sqlite3.connect('wiki/data.db').execute
 if [ "$COUNT" -gt 0 ]; then
   echo "  이미 $COUNT 개 문서가 있습니다. 다시 넣으려면 wiki/ 를 지우고 실행하세요"
 else
-  PYTHONUTF8=1 python3 scripts/import_dump.py "data/$FILE" wiki --7z 7z --dump-date "$DATE"
+  PYTHONUTF8=1 python3 scripts/import_dump.py "data/$FILE" wiki --7z 7z --dump-date "$DATE" --expected "$DOCS"
 fi
 for f in extras/*.jsonl.gz; do PYTHONUTF8=1 python3 scripts/import_templates.py "$f" wiki; done
 PYTHONUTF8=1 python3 scripts/add_frontpage.py wiki

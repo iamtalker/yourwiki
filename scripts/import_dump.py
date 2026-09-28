@@ -66,6 +66,15 @@ def attribution(title, contributors, doc=None):
     )
 
 
+def fmt_secs(sec):
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec}초"
+    if sec < 3600:
+        return f"{sec // 60}분"
+    return f"{sec // 3600}시간 {sec % 3600 // 60}분"
+
+
 def full_title(doc):
     ns = doc["namespace"]
     title = doc["title"]
@@ -101,6 +110,7 @@ def main():
     ap.add_argument("--skip-ns", default="", help="제외할 namespace 번호, 쉼표 구분")
     ap.add_argument("--dump-date", default="2021-03-01", help="덤프 기준일(저작자 표시에 사용)")
     ap.add_argument("--limit", type=int, default=0, help="시험용: N개만 가져오기")
+    ap.add_argument("--expected", type=int, default=0, help="예상 문서 수(진행률·남은 시간 표시용)")
     args = ap.parse_args()
     global DUMP_DATE
     DUMP_DATE = args.dump_date
@@ -161,7 +171,13 @@ def main():
         if len(data_rows) >= BATCH:
             flush()
         if n % 50000 == 0:
-            print(f"  {n:,}개 ({time.time() - t0:,.0f}초)", flush=True)
+            el = time.time() - t0
+            if args.expected:
+                left = max(args.expected - n, 0) * el / n
+                print(f"  진행 {n:,} / 약 {args.expected:,}개 ({min(99, n * 100 // args.expected)}%) · "
+                      f"{fmt_secs(el)} 지남 · 남은 시간 약 {fmt_secs(left)}", flush=True)
+            else:
+                print(f"  진행 {n:,}개 · {fmt_secs(el)} 지남", flush=True)
         if args.limit and n >= args.limit:
             break
     flush()
