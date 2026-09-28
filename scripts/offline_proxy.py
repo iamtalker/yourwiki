@@ -101,7 +101,7 @@ inputs.forEach(function(inp){
 var f=inp.form||inp.parentElement;if(f&&!f.querySelector('.kit-random')){var a=document.createElement('a');
 a.href='/random';a.className='kit-random';a.title='아무 문서나 보기';a.textContent='🔀';
 a.style.cssText='display:inline-flex;align-items:center;justify-content:center;margin-left:4px;padding:0 8px;height:30px;border-radius:6px;background:#1fb6ff;color:#fff;text-decoration:none;font-size:15px;vertical-align:middle';
-var b=f.querySelector('button');if(b){b.parentNode.insertBefore(a,b)}else{f.appendChild(a)}}
+inp.parentNode.insertBefore(a,inp);a.style.marginLeft='0';a.style.marginRight='4px'}
 inp.setAttribute('list','kit-suggest');inp.setAttribute('autocomplete','off');
 inp.addEventListener('input',function(){var q=inp.value.trim();clearTimeout(timer);if(!q||q===last)return;
 timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()})
