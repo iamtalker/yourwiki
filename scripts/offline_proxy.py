@@ -121,6 +121,8 @@ def theme_css():
                          ".top_cel_in a{color:#222!important}.top_cel_in a:hover{background-color:#eef!important}"
                          f".kit-badge{{background:{color}!important}}"
                          f"#nav_bar{{background-color:{color}!important}}#nav_bar a{{color:#fff!important}}"
+                         f"button.search_button,button.search_button:hover{{background:{color}!important;color:#fff!important}}"
+                         f"button.search_button:hover{{background:{darker(color)}!important}}"
                          f"#nav_bar a:hover{{background-color:{darker(color)}!important}}"
                          "</style>")
         _theme["mtime"] = mtime
@@ -131,7 +133,12 @@ LAYOUT_JS = """<script>(function(){
 /* 목록·도구·사용자 메뉴를 오른쪽에서 왼쪽 로고(유어위키) 옆으로 옮긴다. 검색창은 오른쪽에 둔다. */
 var left=document.querySelector('header#main #left'),cels=document.querySelectorAll('header#main #right > .top_cel');
 if(!left||!cels.length)return;left.style.display='inline-flex';left.style.alignItems='center';left.style.gap='4px';
-cels.forEach(function(c){left.appendChild(c)})})();</script>"""
+cels.forEach(function(c){left.appendChild(c)})})();
+(function(){/* 검색 단추를 나무위키처럼: 검색은 돋보기, 바로 가기는 오른쪽 화살표, 순서는 돋보기 → 화살표 */
+var arrow='<svg width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 11h12.17l-5.59-5.59L12 4l8 8-8 8-1.41-1.41L16.17 13H4z"/></svg>';
+var lens='<svg width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14"/></svg>';
+document.querySelectorAll('button.search_button#goto').forEach(function(g){g.innerHTML=arrow;g.title='바로 가기';
+var sb=g.parentNode.querySelector('button.search_button#search');if(sb){sb.innerHTML=lens;sb.title='검색';g.parentNode.insertBefore(sb,g)}})})();</script>"""
 
 SUGGEST_JS = """<script>(function(){
 var inputs=document.querySelectorAll('input[type=search],input[name=search]');if(!inputs.length)return;
