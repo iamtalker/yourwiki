@@ -32,6 +32,11 @@
           "type": "http",
           "url": "https://archive.org/download/yourwiki-namumark-20260829/yourwiki-namumark-20260829-build20260928.7z",
           "note": "archive.org 영구 보관 (MD5 확인 완료 2026-09-28)"
+        },
+        {
+          "type": "http",
+          "url": "https://huggingface.co/datasets/iamtalker/yourwiki-namumark-20260829/resolve/main/yourwiki-namumark-20260829-build20260928.7z",
+          "note": "Hugging Face 보조 경로 (SHA-256 확인 완료)"
         }
       ],
       "sha256": "7cc470f1eee12823c60db9cc628ef6656924c8f76bc054545ac476e84976d6ff"
