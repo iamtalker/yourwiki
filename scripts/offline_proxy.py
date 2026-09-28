@@ -108,26 +108,63 @@ class Handler(http.server.BaseHTTPRequestHandler):
     cdn_dir = ""
     queue_db = ""
 
+    COOLDOWN = 24 * 3600
+
+    def _qdb(self):
+        db = sqlite3.connect(self.queue_db, timeout=30)
+        db.executescript("create table if not exists queue (title text primary key, priority int, reason text, added real);"
+                         "create table if not exists fetched (title text primary key, at real, namu_modified text);")
+        return db
+
+    def _send_bytes(self, body, ctype):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _refresh(self):
-        """갱신 단추: 문서를 갱신 대기열 맨 앞(우선순위 9)에 넣는다. 실제로 받는 건 updater.py."""
+        """갱신 단추: 문서를 대기열 맨 앞(우선순위 9)에 넣고, 갱신이 끝나면 문서로 자동으로 돌아가는 화면을 보낸다.
+
+        실제로 받는 건 updater.py 이고, 이 화면은 /_kit/refresh_status 를 물어보며 기다린다.
+        """
         title = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("title") or [""])[0]
+        now = time.time()
+        recent = False
         if title:
-            db = sqlite3.connect(self.queue_db, timeout=30)
-            db.execute("create table if not exists queue (title text primary key, priority int, reason text, added real)")
-            db.execute("insert into queue values (?, 9, '사용자 요청', ?) "
-                       "on conflict(title) do update set priority = 9", (title, time.time()))
-            db.commit()
+            db = self._qdb()
+            row = db.execute("select at from fetched where title = ?", (title,)).fetchone()
+            recent = bool(row and now - row[0] < self.COOLDOWN)
+            if not recent:
+                db.execute("insert into queue values (?, 9, '사용자 요청', ?) "
+                           "on conflict(title) do update set priority = 9", (title, now))
+                db.commit()
             db.close()
         back = "/w/" + urllib.parse.quote(title)
+        if recent:
+            msg = "이 문서는 24시간 안에 이미 나무위키에서 확인했습니다(서버 부담을 줄이려고 하루에 한 번만 받습니다). 문서로 돌아갑니다."
+            script = f"setTimeout(function(){{location.replace({json.dumps(back)})}},2000);"
+        else:
+            msg = "나무위키에서 최신판을 받아 오는 중입니다… 끝나면 자동으로 문서로 돌아갑니다."
+            script = (f"var t={json.dumps(title)},since={now},n=0;"
+                      "function poll(){fetch('/_kit/refresh_status?title='+encodeURIComponent(t)+'&since='+since)"
+                      ".then(function(r){return r.json()}).then(function(s){"
+                      f"if(s.done||++n>45){{location.replace({json.dumps(back)})}}else{{setTimeout(poll,2000)}}"
+                      f"}}).catch(function(){{setTimeout(poll,2000)}})}}poll();")
         page = ('<meta charset="utf-8"><div style="font-size:16px;padding:24px;line-height:1.7">'
-                f"「{html.escape(title)}」 갱신을 요청했습니다.<br>보통 1분 안에 반영됩니다. 잠시 뒤 문서를 새로고침하세요.<br>"
-                "<small>같은 문서는 나무위키 서버 부담을 줄이려고 24시간에 한 번만 받습니다.</small><br><br>"
-                f'<a href="{back}">← 문서로 돌아가기</a></div>').encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(page)))
-        self.end_headers()
-        self.wfile.write(page)
+                f"「{html.escape(title)}」<br>{msg}<br><br>"
+                f'<a href="{back}">← 기다리지 않고 문서로 돌아가기</a></div><script>{script}</script>').encode("utf-8")
+        self._send_bytes(page, "text/html; charset=utf-8")
+
+    def _refresh_status(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        title = (q.get("title") or [""])[0]
+        since = float((q.get("since") or ["0"])[0] or 0)
+        db = self._qdb()
+        row = db.execute("select at from fetched where title = ?", (title,)).fetchone()
+        db.close()
+        self._send_bytes(json.dumps({"done": bool(row and row[0] >= since)}).encode(), "application/json")
 
     def log_message(self, *args):
         pass
@@ -150,6 +187,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _proxy(self):
         if self.path.startswith("/_kit/cdn/"):
             return self._serve_cdn()
+        if self.path.startswith("/_kit/refresh_status") and self.queue_db:
+            return self._refresh_status()
         if self.path.startswith("/_kit/refresh") and self.queue_db:
             return self._refresh()
         length = int(self.headers.get("Content-Length") or 0)
