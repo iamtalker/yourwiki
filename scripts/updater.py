@@ -164,16 +164,20 @@ def next_title(q, share=False):
         t = p2p.audit_candidate(q)  # P2P 로 받은 문서를 나무위키에서 직접 받아 맞춰 본다(사보타주 검증)
         if t:
             return t
-    order = "priority desc, random()" if share else "priority desc, added asc"
-    for title, added in q.execute(f"select title, added from queue order by {order}").fetchall():
-        row = q.execute("select at from fetched where title = ?", (title,)).fetchone()
-        if row and now - row[0] < COOLDOWN:
-            q.execute("delete from queue where title = ?", (title,))  # 쿨다운 중이면 버린다
-            continue
-        if share and p2p.trusted_copy(q, title, since=(added or now) - 60):
-            continue
-        return title
-    return None
+    # 쿨다운 중인 문서는 버린다(같은 문서는 24시간에 한 번)
+    q.execute("delete from queue where exists (select 1 from fetched f where f.title = queue.title and f.at > ?)",
+              (now - COOLDOWN,))
+    if not share:
+        r = q.execute("select title from queue order by priority desc, added asc limit 1").fetchone()
+        return r[0] if r else None
+    # 친구나 검증된 ID 가 대기열에 들어온 뒤에 받은 문서는 건너뛴다(한 번의 질의로, 대기열 전체를 정렬하지 않고)
+    r = q.execute(
+        "select title from queue where not exists ("
+        "  select 1 from hindex i join nodes n on n.id = i.node"
+        "  where i.title = queue.title and i.at >= coalesce(queue.added, 0) - 60 and n.banned = 0"
+        "  and (n.trusted = 1 or (i.conv = ? and n.audits_ok >= ? and n.audits_bad = 0)))"
+        " order by priority desc, random() limit 1", (p2p.conv_id(), p2p.PROBATION)).fetchone()
+    return r[0] if r else None
 
 
 # ---------------------------------------------------------------- 위키 반영
@@ -234,6 +238,8 @@ def refresh(f, q, wiki_dir, size_map, title, share=False):
     try:
         body = f.get("/w/" + urllib.parse.quote(title, safe=""))
     except Forbidden:
+        if share:
+            p2p.audit_missing(q, wiki_dir, title, "403")
         q.execute("delete from queue where title = ?", (title,))
         q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), "forbidden"))
         q.commit()
@@ -241,6 +247,8 @@ def refresh(f, q, wiki_dir, size_map, title, share=False):
         return
     q.execute("delete from queue where title = ?", (title,))
     if body is None:
+        if share and p2p.audit_missing(q, wiki_dir, title, "404"):
+            log(f"P2P 로 받은 문서인데 나무위키에 없음 → 되돌림: {title}")
         log(f"없음(404): {title}")
         q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), ""))
         q.commit()

@@ -25,11 +25,11 @@ if [ "${P2P:-off}" = on ]; then
   IFS=',' read -ra PS <<< "${P2P_FRIENDS:-}"
   for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--friend "$p"); done
   echo "== 내 P2P ID: $(python3 scripts/p2p.py wiki --id)"
-  python3 scripts/p2p.py wiki --watch "${X[@]}" &
+  python3 scripts/p2p.py wiki --watch ${X[@]+"${X[@]}"} &
 fi
 case "$SYNC" in
-  auto)  python3 scripts/updater.py wiki --watch "${P2P_ARGS[@]}" & ;;
-  queue) python3 scripts/updater.py wiki --watch --queue-only "${P2P_ARGS[@]}" & ;;
+  auto)  python3 scripts/updater.py wiki --watch ${P2P_ARGS[@]+"${P2P_ARGS[@]}"} & ;;
+  queue) python3 scripts/updater.py wiki --watch --queue-only ${P2P_ARGS[@]+"${P2P_ARGS[@]}"} & ;;
 esac
 echo "== 유어위키: http://<서버 주소>:${LISTEN##*:} (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: ${P2P:-off} · 중계소: ${HUB:-off}"
-exec python3 scripts/offline_proxy.py assets --listen "$LISTEN" --upstream 127.0.0.1:3001 --queue-db wiki/updater.db "${HUB_ARGS[@]}"
+exec python3 scripts/offline_proxy.py assets --listen "$LISTEN" --upstream 127.0.0.1:3001 --queue-db wiki/updater.db ${HUB_ARGS[@]+"${HUB_ARGS[@]}"}

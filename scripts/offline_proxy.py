@@ -314,9 +314,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """중계소(/_hub/, hub.py 참고): 유어위키들이 보낸 서명된 문서 묶음을 모아 나눠 준다. JSON 만 주고받는다."""
         import hub
         u = urllib.parse.urlsplit(self.path)
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 64 << 20:
-            self.send_error(413)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > 64 << 20:
+            self.send_error(400 if length < 0 else 413)
             return
         body = self.rfile.read(length) if length else b""
         code, obj = hub.handle(hub.db_path_for(self.queue_db), self.command, u.path,
@@ -341,7 +344,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._refresh_status()
         if self.path.startswith("/_kit/refresh") and self.queue_db:
             return self._refresh()
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0:
+            self.send_error(400)
+            return
         body = self.rfile.read(length) if length else None
         headers = {k: v for k, v in self.headers.items()
                    if k.lower() not in ("host", "accept-encoding", "connection")}

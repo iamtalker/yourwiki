@@ -38,14 +38,14 @@ case "${1:-}" in
       for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--hub "$p"); done
       IFS=',' read -ra PS <<< "${P2P_FRIENDS:-}"
       for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--friend "$p"); done
-      launch p2p p2p.log python3 scripts/p2p.py wiki --watch "${X[@]}"
+      launch p2p p2p.log python3 scripts/p2p.py wiki --watch ${X[@]+"${X[@]}"}
       echo "내 P2P ID: $(python3 scripts/p2p.py wiki --id)"
     fi
     launch proxy proxy.log python3 scripts/offline_proxy.py assets --listen "$LISTEN" \
-      --upstream 127.0.0.1:3001 --queue-db wiki/updater.db "${HUB_ARGS[@]}"
+      --upstream 127.0.0.1:3001 --queue-db wiki/updater.db ${HUB_ARGS[@]+"${HUB_ARGS[@]}"}
     case "$SYNC" in
-      auto)  launch updater updater.log python3 scripts/updater.py wiki --watch "${P2P_ARGS[@]}" ;;
-      queue) launch updater updater.log python3 scripts/updater.py wiki --watch --queue-only "${P2P_ARGS[@]}" ;;
+      auto)  launch updater updater.log python3 scripts/updater.py wiki --watch ${P2P_ARGS[@]+"${P2P_ARGS[@]}"} ;;
+      queue) launch updater updater.log python3 scripts/updater.py wiki --watch --queue-only ${P2P_ARGS[@]+"${P2P_ARGS[@]}"} ;;
     esac
     echo "켰습니다: http://$LISTEN (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: $P2P · 중계소: ${HUB:-off}"
     echo "※ CC BY-NC-SA 2.0 KR · 상업적 이용 금지 · 광고를 붙이거나 상업적으로 운영하면 라이선스 위반입니다."

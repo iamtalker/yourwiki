@@ -46,6 +46,8 @@ SYNC_EVERY = 60          # 중계소에서 받아 오는 주기(초)
 MAX_BODY = 64 << 20
 MAX_TEXT = 5 << 20
 PUSH_BATCH = 300
+PUSH_BYTES = 8 << 20     # 묶음 하나의 대략 최대 크기(중계소 한도 64MB 보다 한참 작게)
+STRIKES = 3              # 나무위키에 없는 문서를 준 수습 ID 는 이만큼 쌓이면 차단
 PROBATION = 5            # 검증을 이만큼 통과하면 '검증된 ID'
 CAP_NODE = 3000          # 친구·검증된 ID 하나에게서 한 시간에 받는 최대 문서 수
 CAP_PROBATION = 200      # 수습 ID 들 '모두 합쳐' 한 시간에 받는 최대 문서 수
@@ -84,20 +86,39 @@ def digest(text, redirect):
 
 
 def now_str(offset=0):
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + offset))
+    """나무위키 시각(한국 표준시)으로 지금. 서버·컨테이너가 UTC 여도 나무위키 수정 시각과 바로 비교할 수 있게."""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 9 * 3600 + offset))
 
 
 # ---------------------------------------------------------------- 내 ID
 def load_key(wiki_dir):
+    """내 열쇠. 없으면 만든다. 여러 프로그램이 동시에 처음 켜져도 열쇠가 하나만 생기도록 '없을 때만 만들기'로 쓴다."""
     path = os.path.join(wiki_dir, "p2p_key.json")
-    try:
-        secret = bytes.fromhex(json.load(open(path, encoding="utf-8"))["secret"])
-    except (OSError, ValueError, KeyError):
-        secret = ed25519.new_secret()
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"secret": secret.hex(), "주의": "이 파일은 내 P2P ID 의 비밀 열쇠입니다. 남에게 주지 마세요."},
-                      f, ensure_ascii=False)
-    return secret, ed25519.public_key(secret).hex()
+    for attempt in range(20):
+        try:
+            secret = bytes.fromhex(json.load(open(path, encoding="utf-8"))["secret"])
+            if len(secret) == 32:
+                return secret, ed25519.public_key(secret).hex()
+            raise ValueError("열쇠 길이가 이상함")
+        except FileNotFoundError:
+            secret = ed25519.new_secret()
+            data = json.dumps({"secret": secret.hex(), "주의": "이 파일은 내 P2P ID 의 비밀 열쇠입니다. 남에게 주지 마세요."},
+                              ensure_ascii=False).encode("utf-8")
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                continue  # 다른 프로그램이 방금 만들었다 → 그것을 읽는다
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            return secret, ed25519.public_key(secret).hex()
+        except (OSError, ValueError, KeyError):
+            if attempt < 10:  # 다른 프로그램이 쓰는 중일 수 있다
+                time.sleep(0.1)
+                continue
+            broken = path + f".broken-{int(time.time())}"
+            os.replace(path, broken)
+            log(f"P2P 열쇠 파일이 망가져 {broken} 로 옮기고 새로 만듭니다(ID 가 바뀝니다).")
+    raise RuntimeError("P2P 열쇠를 만들지 못했습니다")
 
 
 def my_id(wiki_dir):
@@ -121,11 +142,14 @@ def init(q):
         create index if not exists hindex_title on hindex(title);
         create table if not exists p2p_backup (title text primary key, data text, last_edit text, at real, node text);
     """)
-    for col in ("node text default ''", "conv text default ''", "audited int default 0", "tier text default ''"):
+    for table, col in (("shared", "node text default ''"), ("shared", "conv text default ''"),
+                       ("shared", "audited int default 0"), ("shared", "tier text default ''"),
+                       ("hindex", "seen real default 0"), ("nodes", "strikes int default 0")):
         try:
-            q.execute(f"alter table shared add column {col}")
+            q.execute(f"alter table {table} add column {col}")
         except sqlite3.OperationalError:
             pass  # 이미 있음
+    q.execute("create index if not exists hindex_sha on hindex(title, sha, seen)")
     return q
 
 
@@ -196,7 +220,7 @@ class Worker:
         self.wiki_dir = wiki_dir
         self.q = init(sqlite3.connect(os.path.join(wiki_dir, "updater.db"), timeout=30))
         self.secret, self.me = load_key(wiki_dir)
-        self.synced = {}
+        self.synced, self.clock = {}, 0.0
         hubs = [u for u in (norm_url(h) for h in hubs) if u]
         for h in hubs:
             self.q.execute("insert or ignore into hubs (url) values (?)", (h,))
@@ -213,22 +237,40 @@ class Worker:
 
     # -- 보내기: 내가 나무위키에서 직접 받은 문서만 서명해서 보낸다
     def push(self, hub):
+        """묶음은 문서 300개 또는 8MB 까지. 중계소가 영영 받지 않을 묶음(400·413)은 반으로 나눠 다시 보내고,
+        문서 하나까지 줄여도 안 되면 그 문서만 건너뛴다. 한도(429)나 연결 문제면 이번에는 그만 보낸다."""
         pushed = self.q.execute("select pushed from hubs where url = ?", (hub,)).fetchone()[0] or 0
-        sent = 0
+        sent, limit = 0, PUSH_BATCH
         while True:
-            rows = self.q.execute("select title, modified, sha, conv, at, text, redirect from shared "
-                                  "where src = 'namu' and at > ? and modified != '' order by at limit ?",
-                                  (pushed, PUSH_BATCH)).fetchall()
+            rows, size = [], 0
+            for r in self.q.execute("select title, modified, sha, conv, at, text, redirect from shared "
+                                    "where src = 'namu' and at > ? and modified != '' order by at limit ?",
+                                    (pushed, limit)):
+                n = len(r[5].encode("utf-8")) + 200
+                if rows and size + n > PUSH_BYTES:
+                    break
+                rows.append(r)
+                size += n
             if not rows:
                 return sent
             items = [[t, m, s, c, a] for t, m, s, c, a, _, _ in rows]
             body = {"node": self.me, "items": items, "sig": ed25519.sign(self.secret, canonical(items)).hex(),
                     "docs": {s: [x, r or ""] for _, _, s, _, _, x, r in rows}}
-            http_json(hub + "/_hub/submit", json.dumps(body, ensure_ascii=False).encode("utf-8"))
+            try:
+                http_json(hub + "/_hub/submit", json.dumps(body, ensure_ascii=False).encode("utf-8"))
+            except ValueError as e:
+                if not str(e).startswith(("HTTP 400", "HTTP 413")):
+                    log(f"중계소 {hub} 보내기 잠시 멈춤: {e}")
+                    return sent
+                if len(rows) > 1:
+                    limit = max(1, len(rows) // 2)
+                    continue
+                log(f"중계소가 받지 않는 문서라 건너뜀: {rows[0][0]} — {e}")
             pushed = rows[-1][4]
             self.q.execute("update hubs set pushed = ? where url = ?", (pushed, hub))
             self.q.commit()
             sent += len(rows)
+            limit = PUSH_BATCH
 
     # -- 받기: 서명을 직접 확인한 묶음만 목록에 넣는다(중계소를 믿지 않는다)
     def pull(self, hub):
@@ -257,8 +299,14 @@ class Worker:
                     if isinstance(it, list) and len(it) == 5 and isinstance(it[0], str) and isinstance(it[1], str) \
                             and MODIFIED_RE.match(it[1]) and it[1] <= future and isinstance(it[2], str) \
                             and HEX64.match(it[2]) and isinstance(it[3], str) and isinstance(it[4], (int, float)):
-                        rows.append((node, it[0], it[1], it[2], it[3][:16], float(it[4]), hub))
-                self.q.executemany("insert or replace into hindex values (?, ?, ?, ?, ?, ?, ?)", rows)
+                        self.clock = max(time.time(), self.clock + 1e-6)  # 내가 처음 본 순서
+                        rows.append((node, it[0], it[1], it[2], it[3][:16], float(it[4]), hub, self.clock))
+                self.q.executemany(
+                    "insert into hindex (node, title, modified, sha, conv, at, hub, seen) values (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "on conflict(node, title) do update set modified = excluded.modified, conv = excluded.conv, "
+                    "at = excluded.at, hub = excluded.hub, "
+                    "seen = case when hindex.sha = excluded.sha then hindex.seen else excluded.seen end, "
+                    "sha = excluded.sha", rows)
                 got += len(rows)
             cursor = max(cursor, int(r.get("next", cursor)))
             self.q.execute("update hubs set cursor = ? where url = ?", (cursor, hub))
@@ -337,7 +385,11 @@ class Worker:
                 continue
             self.synced[hub] = now
             try:
-                sent = self.push(hub)
+                try:
+                    sent = self.push(hub)
+                except (OSError, urllib.error.URLError) as e:  # 보내기가 안 돼도 받기는 한다
+                    sent = 0
+                    log(f"중계소 {hub} 보내기 실패: {e}")
                 got = self.pull(hub)
                 self.q.execute("update hubs set last_ok = ?, fails = 0 where url = ?", (time.time(), hub))
                 if sent or got:
@@ -409,28 +461,72 @@ def audit_candidate(q):
     return r[0] if r else None
 
 
+def words(text):
+    """글자·숫자 낱말만 뽑는다(서식 차이는 무시하고 내용 차이만 보려고)."""
+    return re.findall(r"\w+", text or "")
+
+
 def audit(q, wiki_dir, title, text, redirect, modified):
     """갱신기가 나무위키에서 받은 문서로, 전에 P2P 로 받은 같은 문서를 검증한다.
 
     'ok' · 'bad'(차단함) · 'unknown'(그 사이 나무위키 문서가 바뀌었거나 변환기 판이 달라 판단할 수 없음) · None(해당 없음)
+    - 피어가 말한 수정 시각이 나무위키의 지금 판보다 늦으면 거짓이다(있을 수 없는 판).
+    - 같은 수정 시각인데 낱말이 다르면 거짓이다. 서식만 다르면(같은 판을 다른 때에 받아 변환 결과가 조금 다른 경우) 통과.
+    - 통과해도, 그 내용을 처음 올린 ID 가 아니면(남의 것을 다시 서명해 올린 경우) 실적으로 쳐 주지 않는다.
     """
     init(q)
-    r = q.execute("select node, modified, sha, conv from shared where title = ? and src = 'p2p' and audited = 0",
-                  (title,)).fetchone()
+    r = q.execute("select node, modified, sha, conv, text, redirect from shared "
+                  "where title = ? and src = 'p2p' and audited = 0", (title,)).fetchone()
     if not r:
         return None
-    node, pmod, psha, pconv = r
-    if pmod != modified or pconv != conv_id():
+    node, pmod, psha, pconv, ptext, predirect = r
+    if not modified:  # 나무위키 화면에서 수정 시각을 읽지 못함 → 판단할 수 없음
+        q.execute("update shared set audited = 1 where title = ?", (title,))
+        return "unknown"
+    if pmod > modified:
+        ban(q, wiki_dir, node, f"「{title}」 의 수정 시각을 나무위키 지금 판({modified})보다 늦은 {pmod} 로 속임")
+        return "bad"
+    if pmod < modified or pconv != conv_id():
         q.execute("update shared set audited = 1 where title = ?", (title,))
         q.execute("delete from p2p_backup where title = ?", (title,))
         return "unknown"
-    if digest(text, redirect) == psha:
-        q.execute("update shared set audited = 1 where title = ?", (title,))
+    if digest(text, redirect) != psha and (words(text) != words(ptext) or (redirect or "") != (predirect or "")):
+        ban(q, wiki_dir, node, f"「{title}」 수정 {modified} 의 내용이 나무위키와 다름")
+        return "bad"
+    q.execute("update shared set audited = 1 where title = ?", (title,))
+    q.execute("delete from p2p_backup where title = ?", (title,))
+    first = q.execute("select node from hindex where title = ? and sha = ? order by seen limit 1",
+                      (title, psha)).fetchone()
+    if first and first[0] == node:  # 처음 올린 ID 만 실적을 얻는다
         q.execute("update nodes set audits_ok = audits_ok + 1 where id = ?", (node,))
+    return "ok"
+
+
+def audit_missing(q, wiki_dir, title, kind):
+    """나무위키에서 문서가 없거나(404) 접근 금지(403)일 때. P2P 로 받은 그 문서를 판단한다.
+
+    404: 나무위키에 없는 문서를 준 것이다(그 사이 지워졌을 수도 있다). 받은 내용을 되돌리고,
+         수습 ID 가 이런 일을 STRIKES 번 하면 차단한다. 403: 판단할 수 없으므로 검증 대상에서만 뺀다.
+    어느 쪽이든 같은 문서를 계속 검증하느라 요청을 낭비하지 않게 audited 로 표시한다.
+    """
+    init(q)
+    r = q.execute("select node, tier from shared where title = ? and src = 'p2p' and audited = 0", (title,)).fetchone()
+    if not r:
+        return None
+    node, tier = r
+    if kind != "404":
+        q.execute("update shared set audited = 1 where title = ?", (title,))
         q.execute("delete from p2p_backup where title = ?", (title,))
-        return "ok"
-    ban(q, wiki_dir, node, f"「{title}」 수정 {modified} 의 내용이 나무위키와 다름")
-    return "bad"
+        return "unknown"
+    restore(q, wiki_dir, title, node)
+    q.execute("delete from shared where title = ?", (title,))
+    q.execute("update nodes set strikes = strikes + 1 where id = ?", (node,))
+    strikes = q.execute("select strikes from nodes where id = ?", (node,)).fetchone()[0]
+    if tier == "probation" and strikes >= STRIKES:
+        ban(q, wiki_dir, node, f"나무위키에 없는 문서를 {strikes}번 줌(마지막: 「{title}」)")
+        return "bad"
+    q.commit()
+    return "missing"
 
 
 def ban(q, wiki_dir, node, why):
@@ -459,7 +555,8 @@ def restore(q, wiki_dir, title, node):
         rev = (db.execute("select max(id + 0) from history where title = ?", (wt,)).fetchone()[0] or 0) + 1
         db.execute("insert into history (id, title, data, date, ip, send, leng, hide, type) "
                    "values (?, ?, ?, ?, '유어위키 P2P', ?, ?, '', '')",
-                   (str(rev), wt, data, now_str(), f"사보타주로 판단한 ID({node[:12]}…)의 내용을 되돌림", str(len(data))))
+                   (str(rev), wt, data, time.strftime("%Y-%m-%d %H:%M:%S"),
+                    f"사보타주로 판단한 ID({node[:12]}…)의 내용을 되돌림", str(len(data))))
         db.execute("delete from data_set where doc_name = ? and set_name in ('last_edit', 'length')", (wt,))
         db.executemany("insert into data_set (doc_name, doc_rev, set_name, set_data) values (?, '', ?, ?)",
                        [(wt, "last_edit", last_edit or ""), (wt, "length", str(len(data)))])

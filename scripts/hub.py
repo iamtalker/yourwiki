@@ -64,7 +64,7 @@ def submit(db, body):
     if not ed25519.verify(bytes.fromhex(node), canonical(items), sig):
         return 403, {"error": "서명이 맞지 않음"}
     now = time.time()
-    future = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now + 600))
+    future = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now + 9 * 3600 + 600))  # 나무위키 시각(한국 표준시)
     for it in items:
         if not (isinstance(it, list) and len(it) == 5 and isinstance(it[0], str) and it[0]
                 and isinstance(it[1], str) and MODIFIED_RE.match(it[1]) and it[1] <= future

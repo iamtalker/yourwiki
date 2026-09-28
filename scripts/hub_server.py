@@ -36,7 +36,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, {"app": hub.APP, "안내": "유어위키 중계소입니다. 유어위키 관리판의 '중계소 주소'에 이 주소를 적으세요."})
         if not u.path.startswith("/_hub/"):
             return self._send(404, {"error": "없음"})
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0:
+            return self._send(400, {"error": "Content-Length 가 잘못됨"})
         if length > MAX_BODY:
             return self._send(413, {"error": "너무 큼"})
         body = self.rfile.read(length) if length else b""
