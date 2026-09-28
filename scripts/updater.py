@@ -209,6 +209,8 @@ def refresh(f, q, wiki_dir, size_map, title):
     modified = m.group(1) if m else ""
     text, info = html2namu.convert(body, size_map, title)
     changed = apply(wiki_dir, title, text, info, modified)
+    q.execute("create table if not exists result (title text primary key, at real, changed int)")
+    q.execute("insert or replace into result values (?, ?, ?)", (title, time.time(), int(changed)))
     q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), modified))
     q.commit()
     log(f"{'갱신' if changed else '변경 없음'}: {title} (나무위키 수정 {modified or '?'})")

@@ -161,17 +161,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             db.close()
         back = "/w/" + urllib.parse.quote(title)
         if recent:
-            msg = "이 문서는 24시간 안에 이미 나무위키에서 확인했습니다(서버 부담을 줄이려고 하루에 한 번만 받습니다). 문서로 돌아갑니다."
+            msg = ("<b>최신 버전입니다.</b><br><small>24시간 안에 나무위키에서 확인한 문서입니다"
+                   "(서버 부담을 줄이려고 하루에 한 번만 받습니다).</small>")
             script = f"setTimeout(function(){{location.replace({json.dumps(back)})}},2000);"
         else:
-            msg = "나무위키에서 최신판을 받아 오는 중입니다… 끝나면 자동으로 문서로 돌아갑니다."
-            script = (f"var t={json.dumps(title)},since={now},n=0;"
+            msg = "나무위키에서 최신판을 확인하는 중입니다…"
+            script = (f"var t={json.dumps(title)},since={now},n=0,m=document.getElementById('kit-msg');"
+                      f"function go(){{location.replace({json.dumps(back)})}}"
                       "function poll(){fetch('/_kit/refresh_status?title='+encodeURIComponent(t)+'&since='+since)"
                       ".then(function(r){return r.json()}).then(function(s){"
-                      f"if(s.done||++n>45){{location.replace({json.dumps(back)})}}else{{setTimeout(poll,2000)}}"
-                      f"}}).catch(function(){{setTimeout(poll,2000)}})}}poll();")
+                      "if(s.done){m.innerHTML=s.changed?'<b>최신판으로 갱신했습니다.</b>':'<b>최신 버전입니다.</b>';setTimeout(go,1500)}"
+                      "else if(++n>45){go()}else{setTimeout(poll,2000)}"
+                      "}).catch(function(){setTimeout(poll,2000)})}poll();")
         page = ('<meta charset="utf-8"><div style="font-size:16px;padding:24px;line-height:1.7">'
-                f"「{html.escape(title)}」<br>{msg}<br><br>"
+                f'「{html.escape(title)}」<br><span id="kit-msg">{msg}</span><br><br>'
                 f'<a href="{back}">← 기다리지 않고 문서로 돌아가기</a></div><script>{script}</script>').encode("utf-8")
         self._send_bytes(page, "text/html; charset=utf-8")
 
@@ -197,9 +200,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         title = (q.get("title") or [""])[0]
         since = float((q.get("since") or ["0"])[0] or 0)
         db = self._qdb()
+        db.execute("create table if not exists result (title text primary key, at real, changed int)")
         row = db.execute("select at from fetched where title = ?", (title,)).fetchone()
+        res = db.execute("select changed from result where title = ?", (title,)).fetchone()
         db.close()
-        self._send_bytes(json.dumps({"done": bool(row and row[0] >= since)}).encode(), "application/json")
+        done = bool(row and row[0] >= since)
+        self._send_bytes(json.dumps({"done": done, "changed": bool(done and res and res[0])}).encode(),
+                         "application/json")
 
     def log_message(self, *args):
         pass

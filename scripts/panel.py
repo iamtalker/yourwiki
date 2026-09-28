@@ -87,7 +87,15 @@ def start_wiki():
                             "--queue-db", os.path.join(WIKI, "updater.db")], "proxy.log")
         if not alive("updater"):
             start_updater()
-    return "켰습니다"
+
+    def open_when_ready():  # 엔진이 준비되면 첫 화면을 브라우저로 연다
+        for _ in range(600):
+            if port_open(3001):
+                webbrowser.open("http://" + settings()["listen"].replace("0.0.0.0", "127.0.0.1") + "/")
+                return
+            time.sleep(1)
+    threading.Thread(target=open_when_ready, daemon=True).start()
+    return "켰습니다. 준비되면 첫 화면이 자동으로 열립니다"
 
 
 def stop_wiki():
