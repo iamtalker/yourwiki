@@ -38,22 +38,37 @@ chmod +x wiki/main.bin
 echo "  완료"
 
 # sources.json 에서 판 정보 읽기
-read -r FILE SHA DATE URL < <(python3 - "$EDITION" <<'PY'
+# 첫 줄은 파일·해시·날짜, 그다음 줄부터는 받을 곳(http)을 sources.json 순서대로
+mapfile -t INFO < <(python3 - "$EDITION" <<'PY'
 import json, sys
 c = json.load(open("sources.json", encoding="utf-8"))
 e = c["editions"][sys.argv[1] or c["default_edition"]]
-url = next(s["url"] for s in e["sources"] if s["type"] == "http")
-print(e["file"], e.get("sha256", "-"), e["date"], url)
+print(e["file"], e.get("sha256", "-"), e["date"])
+for s in e["sources"]:
+    if s["type"] == "http":
+        print(s["url"])
 PY
 )
+read -r FILE SHA DATE <<< "${INFO[0]}"
+URLS=("${INFO[@]:1}")
 
 step "3/6 나무위키 데이터 받기 ($DATE판)"
 verify() {
   if [ "$SHA" != "-" ]; then echo "$SHA  data/$FILE" | sha256sum -c --status 2>/dev/null; else [ -s "data/$FILE" ]; fi
 }
 if ! verify; then
-  curl -fL -C - -o "data/$FILE" "$URL" || die "데이터를 받지 못했습니다. 다시 실행하면 이어서 받습니다"
-  verify || die "데이터 해시가 맞지 않습니다. data/$FILE 을 지우고 다시 실행하세요"
+  OK=
+  for URL in "${URLS[@]}"; do
+    echo "  경로: $URL"
+    if curl -fL -C - -o "data/$FILE" "$URL"; then
+      if verify; then OK=1; break; fi
+      echo "  해시가 맞지 않습니다. 받은 파일을 지우고 다음 경로를 시도합니다."
+      rm -f "data/$FILE"
+    else
+      echo "  이 경로로는 받지 못했습니다. 다음 경로를 시도합니다."
+    fi
+  done
+  [ -n "$OK" ] || die "데이터를 받지 못했습니다. 다시 실행하면 이어서 받습니다"
 fi
 echo "  검증 완료"
 
