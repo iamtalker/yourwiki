@@ -91,7 +91,12 @@ def rewrite_html(body):
 SUGGEST_JS = """<script>(function(){
 var inputs=document.querySelectorAll('input[type=search],input[name=search]');if(!inputs.length)return;
 var dl=document.createElement('datalist');dl.id='kit-suggest';document.body.appendChild(dl);var timer,last='';
-inputs.forEach(function(inp){inp.setAttribute('list','kit-suggest');inp.setAttribute('autocomplete','off');
+inputs.forEach(function(inp){
+var f=inp.form||inp.parentElement;if(f&&!f.querySelector('.kit-random')){var a=document.createElement('a');
+a.href='/random';a.className='kit-random';a.title='아무 문서나 보기';a.textContent='🔀';
+a.style.cssText='display:inline-flex;align-items:center;justify-content:center;margin-left:4px;padding:0 8px;height:30px;border-radius:6px;background:#1fb6ff;color:#fff;text-decoration:none;font-size:15px;vertical-align:middle';
+f.appendChild(a)}
+inp.setAttribute('list','kit-suggest');inp.setAttribute('autocomplete','off');
 inp.addEventListener('input',function(){var q=inp.value.trim();clearTimeout(timer);if(!q||q===last)return;
 timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()})
 .then(function(list){dl.innerHTML='';list.forEach(function(t){var o=document.createElement('option');o.value=t;dl.appendChild(o)})})
