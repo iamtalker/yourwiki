@@ -94,7 +94,7 @@ THEME_CSS = ("<style>"
              f"header#main{{background-color:{THEME['main']}!important}}"
              "header#main a,header#main a#logo{color:#fff!important}"
              f"header#main a:hover,header a#logo:hover,.top_cel a:hover{{background-color:{THEME['hover']}!important}}"
-             f"header#section{{background-color:{THEME['soft']}!important}}"
+             "header#section{background-color:#fff}"  # 제목 영역은 색 없이(다크 모드는 스킨이 덮어씀)
              ".top_cel_in{background:#fff!important;border:1px solid #dbe4ff;box-shadow:0 4px 12px rgba(0,0,0,.12)}"
              ".top_cel_in a{color:#222!important}"
              f".top_cel_in a:hover{{background-color:{THEME['menu_hover']}!important}}"
