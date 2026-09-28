@@ -1,0 +1,9 @@
+.git
+tools/
+data/
+wiki/
+wiki_*/
+run/
+*.log
+panel.json
+__pycache__/

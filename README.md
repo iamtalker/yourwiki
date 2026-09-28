@@ -66,6 +66,19 @@ openNAMU 가 원래 CDN·유튜브·트위터 등에서 불러오던 것을 중�
   보충 틀을 원하지 않으면 `scriptsinstall.ps1 -NoExtras` 로 설치하세요.
 - **이미지가 없습니다.** 텍스트만 다룹니다. 나무위키 이미지는 대부분 CC 라이선스가 아닙니다.
 
+## Docker로 서버에 올리기 (베타)
+
+```bash
+git clone https://github.com/iamtalker/yourwiki && cd yourwiki
+docker compose up -d                 # 처음엔 데이터 받기·설치로 1~2시간
+docker compose logs -f               # 진행 확인
+```
+
+- 설정은 환경 변수로 바꿉니다: `PORT`(바깥 포트, 기본 3000), `SYNC`(auto/queue/off), `COLOR`(머리글 색), `EDITION`(비우면 2026판).
+  예) `PORT=8080 SYNC=queue docker compose up -d`
+- 위키 DB와 받은 데이터는 `./yourwiki-data/` 에 저장되어, 컨테이너를 지우거나 새 버전으로 바꿔도 남습니다.
+- 공개 전에 할 일(관리자 가입, 편집 권한, HTTPS)은 아래 리눅스 절과 같습니다.
+
 ## 리눅스 서버에 설치하기 (베타)
 
 서버(보통 리눅스)에 올리려는 사람을 위한 스크립트가 `server/` 에 있습니다. 윈도우에서 **`서버설치가이드.bat`** 을 누르면 이 안내를 보기 좋게 정리한 페이지가 열립니다.

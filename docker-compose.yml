@@ -1,0 +1,15 @@
+# 사용: docker compose up -d   (처음엔 설치로 1~2시간, 진행은 docker compose logs -f 로 확인)
+services:
+  yourwiki:
+    build: .
+    container_name: yourwiki
+    ports:
+      - "${PORT:-3000}:3000"      # 바깥 포트는 PORT 로 바꿈 (예: PORT=8080 docker compose up -d)
+    environment:
+      SYNC: "${SYNC:-auto}"        # auto(자동 따라잡기) / queue(갱신 단추로 요청한 문서만) / off
+      COLOR: "${COLOR:-#3b5bdb}"   # 위키 머리글 색
+      EDITION: "${EDITION:-}"      # 비우면 2026판, 2021 이면 공식 덤프 원문
+    volumes:
+      - ./yourwiki-data/wiki:/kit/wiki   # 위키 DB (약 35GB)
+      - ./yourwiki-data/data:/kit/data   # 받은 원본 (약 5GB)
+    restart: unless-stopped
