@@ -6,6 +6,7 @@
 관리판 창을 닫으면 함께 띄운 프로그램들도 꺼진다.
 """
 import json
+import re
 import os
 import shutil
 import sqlite3
@@ -164,6 +165,42 @@ def tunnel_url():
     return ""
 
 
+KIT_VERSION = "1.0"
+
+
+def dir_size(path):
+    total = 0
+    for dp, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(dp, f))
+            except OSError:
+                pass
+    return total
+
+
+def info():
+    """키트·엔진·데이터 정보(1분 동안 기억해 둠: 색인 폴더 크기 계산이 느릴 수 있어서)."""
+    if time.time() - _cache.get("info_at", 0) < 60:
+        return _cache["info"]
+    src = json.load(open(os.path.join(ROOT, "sources.json"), encoding="utf-8"))
+    m = re.search(r"/download/([^/]+)/", src["tools"]["opennamu"]["url"])
+    edition = {}
+    try:
+        edition = json.load(open(os.path.join(WIKI, "edition.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    gb = lambda n: round(n / 1e9, 1)  # noqa: E731
+    data_files = sum(os.path.getsize(os.path.join(ROOT, "data", f))
+                     for f in os.listdir(os.path.join(ROOT, "data"))) if os.path.isdir(os.path.join(ROOT, "data")) else 0
+    db = os.path.join(WIKI, "data.db")
+    out = {"kit": KIT_VERSION, "engine": "openNAMU " + (m.group(1) if m else "?"),
+           "edition": edition.get("date", "?"), "db_gb": gb(os.path.getsize(db)) if os.path.exists(db) else 0,
+           "index_gb": gb(dir_size(os.path.join(WIKI, "data", "bleve"))), "dump_gb": gb(data_files)}
+    _cache["info"], _cache["info_at"] = out, time.time()
+    return out
+
+
 def tail(name, n=12):
     try:
         with open(os.path.join(ROOT, name), encoding="utf-8", errors="replace") as f:
@@ -209,6 +246,7 @@ def status():
     st["disk_free_gb"] = round(du.free / 1e9, 1)
     st["install_log"] = tail("install.log")
     st["updater_log"] = tail("updater.log", 8)
+    st["info"] = info()
     st["running"]["tunnel"] = alive("tunnel")
     st["public_url"] = tunnel_url()
     return st
@@ -265,8 +303,9 @@ async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
 function dot(b){return b?'<span class=on>●</span>':'<span class=off>○</span>'}
 async function load(){const s=await (await fetch('/api/status')).json();listen=s.listen;
-document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개':'아직 설치되지 않음')+
-' · 디스크 여유 '+s.disk_free_gb+'GB<br>'+dot(s.running.engine)+' 위키 엔진 '+dot(s.running.proxy)+' 중계 서버 '+
+var i=s.info;document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개':'아직 설치되지 않음')+
+' · 디스크 여유 '+s.disk_free_gb+'GB<br><span style="font-size:13px;color:#555">유어위키 '+i.kit+' · 위키 엔진 '+i.engine+
+' · 데이터 '+i.edition+'판 · 위키 DB '+i.db_gb+'GB · 검색 색인 '+i.index_gb+'GB · 받은 원본 '+i.dump_gb+'GB</span><br>'+dot(s.running.engine)+' 위키 엔진 '+dot(s.running.proxy)+' 중계 서버 '+
 dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중</b>':'')+
 (s.running.engine?(s.ready?'<br><b class=on>위키 준비됨 — [위키 열기]를 누르세요</b>':'<br><b>위키 엔진 시작 중… (문서가 많아 몇 분 걸릴 수 있습니다)</b>'):'');
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);

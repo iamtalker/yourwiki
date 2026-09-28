@@ -133,6 +133,9 @@ if (-not $NoExtras) {
 }
 
 & $python (Join-Path $PSScriptRoot 'add_frontpage.py') $Wiki
+@{ edition = $Edition; date = $d.date; installed_at = (Get-Date -Format 'yyyy-MM-dd') } | ConvertTo-Json | Out-File -Encoding utf8 (Join-Path $Wiki 'edition.json')
+
+
 
 # ---------------------------------------------------------------- 5. 검색 색인
 # openNAMU 는 시작할 때 색인이 없으면 만든다. 중간에 끄면 처음부터 다시 만들므로 설치 때 끝낸다.
