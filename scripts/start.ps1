@@ -24,7 +24,7 @@ Start-Job -ArgumentList $Listen {
         try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 3001); $c.Close(); break }
         catch { Start-Sleep -Seconds 1 }
     }
-    Start-Process "http://127.0.0.1:$port/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4"
+    Start-Process "http://127.0.0.1:$port/"
 } | Out-Null
 $env:PYTHONUTF8 = '1'
 & $python (Join-Path $PSScriptRoot 'offline_proxy.py') (Join-Path $Root 'assets') --listen $Listen --upstream 127.0.0.1:3001

@@ -242,7 +242,7 @@ async function act2(p){alert(await api('/api/'+p));load()}
 async function pub(){if(confirm('위키를 인터넷에 공개할까요? 누구나 주소로 접속할 수 있게 됩니다.')){act2('tunnel?on=1')}}
 async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 수 있습니다.')){alert(await api('/api/install?edition='+e));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
-function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/w/%EB%82%98%EB%AC%B4%EC%9C%84%ED%82%A4','_blank')}
+function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
 function dot(b){return b?'<span class=on>●</span>':'<span class=off>○</span>'}
 async function load(){const s=await (await fetch('/api/status')).json();listen=s.listen;
 document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개':'아직 설치되지 않음')+

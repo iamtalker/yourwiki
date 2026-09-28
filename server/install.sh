@@ -72,6 +72,7 @@ else
   PYTHONUTF8=1 python3 scripts/import_dump.py "data/$FILE" wiki --7z 7z --dump-date "$DATE"
 fi
 for f in extras/*.jsonl.gz; do PYTHONUTF8=1 python3 scripts/import_templates.py "$f" wiki; done
+PYTHONUTF8=1 python3 scripts/add_frontpage.py wiki
 
 step "6/6 설치 완료"
 cat <<'MSG'
