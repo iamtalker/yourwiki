@@ -103,13 +103,38 @@ def add_suggest(body):
     return body.replace("</body>", SUGGEST_JS + "</body>", 1)
 
 
-def refresh_button(body, path):
-    """문서 화면 위쪽에 '나무위키 최신판으로 갱신' 단추를 붙인다(갱신 대기열이 있을 때만)."""
+def checked_at(queue_db, title):
+    """24시간 안에 나무위키에서 확인한 문서면 그 시각(epoch), 아니면 None."""
+    try:
+        db = sqlite3.connect(queue_db, timeout=5)
+        row = db.execute("select at from fetched where title = ?", (title,)).fetchone()
+        db.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row and time.time() - row[0] < 24 * 3600 else None
+
+
+def refresh_button(body, path, queue_db=""):
+    """문서 화면에 '나무위키 최신판으로 갱신' 단추를 붙인다(갱신 대기열이 있을 때만).
+
+    24시간 안에 이미 확인한 문서는 단추 대신 '최신 버전' 표시를 보여 준다.
+    """
     if not path.startswith("/w/"):
         return body
     title = urllib.parse.unquote(path[3:].split("?")[0].split("#")[0])
     if not title or title.startswith(("category:", "틀:")):
         return body
+    at = checked_at(queue_db, title) if queue_db else None
+    if at:
+        t = time.localtime(at)
+        when = time.strftime("%H:%M", t) if time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d") \
+            else time.strftime("%m/%d %H:%M", t)
+        badge = ('<span title="24시간 안에 나무위키에서 확인한 문서입니다" '
+                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#888;color:#fff;'
+                 'font-size:13px;padding:7px 12px;border-radius:18px;box-shadow:0 2px 6px rgba(0,0,0,.25)">'
+                 f'✔ 최신 버전 ({"오늘 " if ":" in when and "/" not in when else ""}{when} 확인)</span>')
+        m = re.search(r"<body[^>]*>", body)
+        return body[:m.end()] + badge + body[m.end():] if m else body
     # 화면 왼쪽 아래에 떠 있게 한다. 문서 안에 넓은 표가 있으면 오른쪽 끝에 붙인 단추가 화면 밖으로 밀려나기 때문.
     btn = ('<a href="/_kit/refresh?title=' + urllib.parse.quote(title) + '" rel="nofollow" '
            'title="이 문서를 나무위키 최신판으로 갱신" '
@@ -264,7 +289,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if "text/html" in ctype:
             data = rewrite_html(data.decode("utf-8", "replace"))
             if self.queue_db:
-                data = add_suggest(refresh_button(data, self.path))
+                data = add_suggest(refresh_button(data, self.path, self.queue_db))
             data = data.encode("utf-8")
         self.send_response(resp.status, resp.reason)
         for k, v in resp.getheaders():
