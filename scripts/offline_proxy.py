@@ -88,6 +88,18 @@ def rewrite_html(body):
     return body.replace("</body>", KIT_NOTICE + "</body>", 1)
 
 
+# 유어위키 색 (나무위키의 녹색과 구분되는 인디고 블루). 스킨 파일 대신 여기서 덧씌운다.
+THEME = {"main": "#3b5bdb", "hover": "#364fc7", "soft": "#edf2ff", "menu_hover": "#dbe4ff"}
+THEME_CSS = ("<style>"
+             f"header#main{{background-color:{THEME['main']}!important}}"
+             "header#main a,header#main a#logo{color:#fff!important}"
+             f"header#main a:hover,header a#logo:hover,.top_cel a:hover{{background-color:{THEME['hover']}!important}}"
+             f"header#section{{background-color:{THEME['soft']}!important}}"
+             ".top_cel_in{background:#fff!important;border:1px solid #dbe4ff;box-shadow:0 4px 12px rgba(0,0,0,.12)}"
+             ".top_cel_in a{color:#222!important}"
+             f".top_cel_in a:hover{{background-color:{THEME['menu_hover']}!important}}"
+             "</style>")
+
 LAYOUT_JS = """<script>(function(){
 /* 목록·도구·사용자 메뉴를 오른쪽에서 왼쪽 로고(유어위키) 옆으로 옮긴다. 검색창은 오른쪽에 둔다. */
 var left=document.querySelector('header#main #left'),cels=document.querySelectorAll('header#main #right > .top_cel');
@@ -100,7 +112,7 @@ var dl=document.createElement('datalist');dl.id='kit-suggest';document.body.appe
 inputs.forEach(function(inp){
 var f=inp.form||inp.parentElement;if(f&&!f.querySelector('.kit-random')){var a=document.createElement('a');
 a.href='/random';a.className='kit-random';a.title='아무 문서나 보기';a.textContent='🔀';
-a.style.cssText='display:inline-flex;align-items:center;justify-content:center;margin-left:4px;padding:0 8px;height:30px;border-radius:6px;background:#1fb6ff;color:#fff;text-decoration:none;font-size:15px;vertical-align:middle';
+a.style.cssText='display:inline-flex;align-items:center;justify-content:center;margin-left:4px;padding:0 8px;height:30px;border-radius:6px;background:rgba(255,255,255,.18);color:#fff;text-decoration:none;font-size:15px;vertical-align:middle';
 inp.parentNode.insertBefore(a,inp);a.style.marginLeft='0';a.style.marginRight='4px'}
 inp.setAttribute('list','kit-suggest');inp.setAttribute('autocomplete','off');
 inp.addEventListener('input',function(){var q=inp.value.trim();clearTimeout(timer);if(!q||q===last)return;
@@ -111,6 +123,7 @@ timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q
 
 def add_suggest(body):
     """모든 페이지의 검색창에 제목 자동완성을 붙인다."""
+    body = body.replace("</head>", THEME_CSS + "</head>", 1)
     return body.replace("</body>", LAYOUT_JS + SUGGEST_JS + "</body>", 1)
 
 
@@ -141,7 +154,7 @@ def refresh_button(body, path, queue_db=""):
         when = time.strftime("%H:%M", t) if time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d") \
             else time.strftime("%m/%d %H:%M", t)
         badge = ('<span title="24시간 안에 나무위키에서 확인한 문서입니다" '
-                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#1fb6ff;color:#fff;'
+                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#4c6ef5;color:#fff;'
                  'font-size:13px;padding:7px 12px;border-radius:18px;box-shadow:0 2px 6px rgba(0,0,0,.25)">'
                  f'✔ 최신 버전 ({"오늘 " if ":" in when and "/" not in when else ""}{when} 확인)</span>')
         m = re.search(r"<body[^>]*>", body)
