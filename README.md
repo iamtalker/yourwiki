@@ -99,3 +99,7 @@ nohup python3 scripts/offline_proxy.py assets --listen 0.0.0.0:3000 --upstream 1
 관리판 설정 파일 `panel.json` 의 `listen` 을 `0.0.0.0:3000` 으로 바꾸면(또는 `scriptsstart.ps1 -Listen 0.0.0.0:3000`) 외부 접속이 열립니다. 공개하는 순간
 **그 사이트의 운영 책임은 공개한 사람에게** 있습니다(권리 침해·게시중단 요청 대응 등).
 "나무위키" 이름과 로고는 쓰지 마세요. 콘텐츠 라이선스와 상표는 별개입니다.
+
+## 변경 기록
+
+버전별 변경점은 [CHANGELOG.md](CHANGELOG.md)에 있습니다.
