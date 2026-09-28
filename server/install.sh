@@ -4,7 +4,7 @@
 #   bash server/install.sh            # 2026판 설치
 #   bash server/install.sh 2021       # 2021 공식 덤프 원문 설치
 #
-# 필요한 것: python3(3.8+), 7z(p7zip-full), curl, sha256sum, 디스크 45GB 이상
+# 필요한 것: python3(3.8+), 7z(p7zip-full), curl, sha256sum, md5sum, 디스크 45GB 이상
 # 이미 끝난 단계는 건너뛰므로, 중간에 끊겨도 다시 실행하면 이어서 진행합니다.
 set -euo pipefail
 
@@ -15,7 +15,7 @@ step() { printf '\n== %s\n' "$*"; }
 die() { echo "오류: $*" >&2; exit 1; }
 
 step "1/6 필요한 프로그램 확인"
-for c in python3 7z curl sha256sum; do
+for c in python3 7z curl sha256sum md5sum; do
   command -v "$c" >/dev/null || die "$c 이 없습니다. 예) sudo apt install python3 p7zip-full curl coreutils"
 done
 case "$(uname -m)" in
@@ -38,23 +38,25 @@ chmod +x wiki/main.bin
 echo "  완료"
 
 # sources.json 에서 판 정보 읽기
-# 첫 줄은 파일·해시·날짜, 그다음 줄부터는 받을 곳(http)을 sources.json 순서대로
+# 첫 줄은 파일·해시(SHA-256, MD5)·날짜, 그다음 줄부터는 받을 곳(http)을 sources.json 순서대로
 mapfile -t INFO < <(python3 - "$EDITION" <<'PY'
 import json, sys
 c = json.load(open("sources.json", encoding="utf-8"))
 e = c["editions"][sys.argv[1] or c["default_edition"]]
-print(e["file"], e.get("sha256", "-"), e["date"])
+print(e["file"], e.get("sha256", "-"), e.get("md5", "-"), e["date"])
 for s in e["sources"]:
     if s["type"] == "http":
         print(s["url"])
 PY
 )
-read -r FILE SHA DATE <<< "${INFO[0]}"
+read -r FILE SHA MD5 DATE <<< "${INFO[0]}"
 URLS=("${INFO[@]:1}")
 
 step "3/6 나무위키 데이터 받기 ($DATE판)"
 verify() {
-  if [ "$SHA" != "-" ]; then echo "$SHA  data/$FILE" | sha256sum -c --status 2>/dev/null; else [ -s "data/$FILE" ]; fi
+  if [ "$SHA" != "-" ]; then echo "$SHA  data/$FILE" | sha256sum -c --status 2>/dev/null
+  elif [ "$MD5" != "-" ]; then echo "$MD5  data/$FILE" | md5sum -c --status 2>/dev/null
+  else [ -s "data/$FILE" ]; fi
 }
 if ! verify; then
   OK=

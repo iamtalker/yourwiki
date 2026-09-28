@@ -2,6 +2,10 @@
 
 버전마다 달라진 점을 여기에 적습니다. 새 버전이 위에 옵니다.
 
+## 1.1.1 — 2026-09-28
+- 리눅스·Docker 설치에서도 archive.org 에서 받지 못하면 Hugging Face 에서 받습니다(1.1 에서는 Windows 설치에만 적용되어 있었습니다).
+- 리눅스·Docker 에서 2021판을 받을 때 MD5 로 검증합니다(받다 만 파일을 완성본으로 착각하던 문제).
+
 ## 1.1 — 2026-09-28
 - 데이터 보조 다운로드 경로 추가: archive.org 에서 받지 못하면 Hugging Face(`iamtalker/yourwiki-namumark-20260829`)에서 받습니다(SHA-256 검증).
 - Docker 이미지와 docker-compose(환경 변수로 포트·동기화·색·데이터 판 설정, 볼륨에 데이터 보관). GitHub 의견 반영. 베타.

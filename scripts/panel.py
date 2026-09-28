@@ -165,7 +165,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "1.1"
+KIT_VERSION = "1.1.1"
 
 
 def dir_size(path):
