@@ -88,6 +88,12 @@ def rewrite_html(body):
     return body.replace("</body>", KIT_NOTICE + "</body>", 1)
 
 
+LAYOUT_JS = """<script>(function(){
+/* 목록·도구·사용자 메뉴를 오른쪽에서 왼쪽 로고(유어위키) 옆으로 옮긴다. 검색창은 오른쪽에 둔다. */
+var left=document.querySelector('header#main #left'),cels=document.querySelectorAll('header#main #right > .top_cel');
+if(!left||!cels.length)return;left.style.display='inline-flex';left.style.alignItems='center';left.style.gap='4px';
+cels.forEach(function(c){left.appendChild(c)})})();</script>"""
+
 SUGGEST_JS = """<script>(function(){
 var inputs=document.querySelectorAll('input[type=search],input[name=search]');if(!inputs.length)return;
 var dl=document.createElement('datalist');dl.id='kit-suggest';document.body.appendChild(dl);var timer,last='';
@@ -105,7 +111,7 @@ timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q
 
 def add_suggest(body):
     """모든 페이지의 검색창에 제목 자동완성을 붙인다."""
-    return body.replace("</body>", SUGGEST_JS + "</body>", 1)
+    return body.replace("</body>", LAYOUT_JS + SUGGEST_JS + "</body>", 1)
 
 
 def checked_at(queue_db, title):
