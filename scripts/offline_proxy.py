@@ -130,7 +130,7 @@ def refresh_button(body, path, queue_db=""):
         when = time.strftime("%H:%M", t) if time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d") \
             else time.strftime("%m/%d %H:%M", t)
         badge = ('<span title="24시간 안에 나무위키에서 확인한 문서입니다" '
-                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#888;color:#fff;'
+                 'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#1fb6ff;color:#fff;'
                  'font-size:13px;padding:7px 12px;border-radius:18px;box-shadow:0 2px 6px rgba(0,0,0,.25)">'
                  f'✔ 최신 버전 ({"오늘 " if ":" in when and "/" not in when else ""}{when} 확인)</span>')
         m = re.search(r"<body[^>]*>", body)
