@@ -123,6 +123,7 @@ def theme_css():
                          f"#nav_bar{{background-color:{color}!important}}#nav_bar a{{color:#fff!important}}"
                          f"button.search_button,button.search_button:hover{{background:{color}!important;color:#fff!important}}"
                          f"button.search_button:hover{{background:{darker(color)}!important}}"
+                         f".kit-random{{background:{color}!important}}.kit-random:hover{{background:{darker(color)}!important}}"
                          f"#nav_bar a:hover{{background-color:{darker(color)}!important}}"
                          "</style>")
         _theme["mtime"] = mtime
@@ -145,9 +146,7 @@ var inputs=document.querySelectorAll('input[type=search],input[name=search]');if
 var dl=document.createElement('datalist');dl.id='kit-suggest';document.body.appendChild(dl);var timer,last='';
 inputs.forEach(function(inp){
 var f=inp.form||inp.parentElement;if(f&&!f.querySelector('.kit-random')){var a=document.createElement('a');
-a.href='/random';a.className='kit-random';a.title='아무 문서나 보기';a.textContent='🔀';
-a.style.cssText='display:inline-flex;align-items:center;justify-content:center;margin-left:4px;padding:0 8px;height:30px;border-radius:6px;background:rgba(255,255,255,.18);color:#fff;text-decoration:none;font-size:15px;vertical-align:middle';
-inp.parentNode.insertBefore(a,inp);a.style.marginLeft='0';a.style.marginRight='4px'}
+a.href='/random';a.className='kit-random';a.title='아무 문서나 보기';a.innerHTML='<svg viewBox="0 0 24 24" style="width:100%;height:100%" aria-hidden="true"><path fill="currentColor" d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04z"/></svg>';a.style.cssText='display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:32px;height:32px;padding:3px;border-radius:6px;color:#fff;text-decoration:none;vertical-align:middle;margin-right:4px';inp.parentNode.insertBefore(a,inp)}
 inp.setAttribute('list','kit-suggest');inp.setAttribute('autocomplete','off');
 inp.addEventListener('input',function(){var q=inp.value.trim();clearTimeout(timer);if(!q||q===last)return;
 timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()})
