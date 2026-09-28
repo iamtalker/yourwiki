@@ -88,6 +88,21 @@ def rewrite_html(body):
     return body.replace("</body>", KIT_NOTICE + "</body>", 1)
 
 
+SUGGEST_JS = """<script>(function(){
+var inputs=document.querySelectorAll('input[type=search],input[name=search]');if(!inputs.length)return;
+var dl=document.createElement('datalist');dl.id='kit-suggest';document.body.appendChild(dl);var timer,last='';
+inputs.forEach(function(inp){inp.setAttribute('list','kit-suggest');inp.setAttribute('autocomplete','off');
+inp.addEventListener('input',function(){var q=inp.value.trim();clearTimeout(timer);if(!q||q===last)return;
+timer=setTimeout(function(){last=q;fetch('/_kit/suggest?q='+encodeURIComponent(q)).then(function(r){return r.json()})
+.then(function(list){dl.innerHTML='';list.forEach(function(t){var o=document.createElement('option');o.value=t;dl.appendChild(o)})})
+.catch(function(){})},200)})})})();</script>"""
+
+
+def add_suggest(body):
+    """모든 페이지의 검색창에 제목 자동완성을 붙인다."""
+    return body.replace("</body>", SUGGEST_JS + "</body>", 1)
+
+
 def refresh_button(body, path):
     """문서 화면 위쪽에 '나무위키 최신판으로 갱신' 단추를 붙인다(갱신 대기열이 있을 때만)."""
     if not path.startswith("/w/"):
@@ -157,6 +172,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 f'<a href="{back}">← 기다리지 않고 문서로 돌아가기</a></div><script>{script}</script>').encode("utf-8")
         self._send_bytes(page, "text/html; charset=utf-8")
 
+    def _suggest(self):
+        """검색창 자동완성: 입력한 글자로 시작하는 문서 제목 10개(제목 색인으로 바로 찾음)."""
+        q = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q") or [""])[0].strip()
+        out = []
+        if q:
+            try:
+                path = os.path.join(os.path.dirname(os.path.abspath(self.queue_db)), "data.db")
+                db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+                out = [r[0] for r in db.execute(
+                    "select title from data where title >= ? and title < ? order by title limit 10",
+                    (q, q + "\U0010ffff"))]
+                db.close()
+            except sqlite3.Error:
+                out = []
+        out = [("분류:" + t[9:]) if t.startswith("category:") else t for t in out]
+        self._send_bytes(json.dumps(out, ensure_ascii=False).encode("utf-8"), "application/json")
+
     def _refresh_status(self):
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         title = (q.get("title") or [""])[0]
@@ -187,6 +219,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _proxy(self):
         if self.path.startswith("/_kit/cdn/"):
             return self._serve_cdn()
+        if self.path.startswith("/_kit/suggest") and self.queue_db:
+            return self._suggest()
         if self.path.startswith("/_kit/refresh_status") and self.queue_db:
             return self._refresh_status()
         if self.path.startswith("/_kit/refresh") and self.queue_db:
@@ -220,7 +254,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if "text/html" in ctype:
             data = rewrite_html(data.decode("utf-8", "replace"))
             if self.queue_db:
-                data = refresh_button(data, self.path)
+                data = add_suggest(refresh_button(data, self.path))
             data = data.encode("utf-8")
         self.send_response(resp.status, resp.reason)
         for k, v in resp.getheaders():
