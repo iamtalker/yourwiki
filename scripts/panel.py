@@ -301,10 +301,24 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, json.dumps({"msg": msg}, ensure_ascii=False), "application/json")
 
 
+def cleanup_leftovers():
+    """전에 관리판 창을 그냥 닫아서 남은 위키 프로그램(엔진·중계 서버·갱신기·터널)을 정리한다."""
+    if not WIN:
+        return
+    ps = ("$root = '" + ROOT.replace("'", "''") + "'; "
+          "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne " + str(os.getpid()) + " -and "
+          "$_.ExecutablePath -and $_.ExecutablePath.StartsWith($root) -and "
+          "$_.Name -in @('main.amd64.exe','python.exe','cloudflared.exe') } | "
+          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], creationflags=NO_WINDOW,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def main():
+    cleanup_leftovers()
     srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
     url = f"http://127.0.0.1:{PANEL_PORT}/"
-    print(f"유어위키 관리판: {url}  (이 창을 닫으면 위키도 꺼집니다)", flush=True)
+    print(f"유어위키 관리판: {url}  (끌 때는 관리판에서 [끄기]를 누르세요)", flush=True)
     webbrowser.open(url)
     try:
         srv.serve_forever()
