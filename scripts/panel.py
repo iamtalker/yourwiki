@@ -447,28 +447,32 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
 <div id="sync"></div><pre id="ulog"></pre></section>
-<section><h2>P2P 공유 (다른 유어위키와 받은 문서 나누기)</h2>
+<section><h2>P2P 공유 — 다른 유어위키와 받은 문서 나누기</h2>
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
 <label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
-<p style="font-size:13px;color:#555">갱신기는 나무위키 서버 부담 때문에 6초에 1건만 받습니다. P2P 를 켜면 참여한 유어위키들이
-<b>서로 다른 문서</b>를 받아 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).
-<b>서버가 필요 없습니다</b>: 켜면 내 위키가 작은 'P2P 창구'를 열고(서명된 문서만 나가며 위키 화면은 공개되지 않습니다),
-그 창구 주소를 BitTorrent 공용 연결망(DHT)에 내 ID 로 적어 둡니다. <b>켜 두기만 하면</b> 공용 연결망의 '유어위키 게시판'으로
-다른 유어위키를 알아서 찾아 주고받습니다(친구를 적을 필요 없음).</p>
-<div style="font-size:13px">내 ID: <code id="myid" style="word-break:break-all"></code>
-<button onclick="navigator.clipboard.writeText(document.getElementById('myid').textContent)">복사</button></div>
-<div style="font-size:13px;margin-top:8px">중계소 주소 (선택. 누군가 고정 주소 서버에 띄운 중계소가 있으면 적으세요):<br>
-<textarea id="hubs" rows="2" style="width:100%;font-size:13px"></textarea>
-<button onclick="api('/api/p2p_hubs?hubs='+encodeURIComponent(document.getElementById('hubs').value)).then(load)">중계소 저장</button></div>
-<div style="font-size:13px;margin-top:8px">친구 ID (선택. 적으면 그 위키가 준 문서는 수습 기간 없이 바로 믿고 받습니다):<br>
+<div id="p2pline" style="margin:8px 0;font-weight:bold"></div>
+<ul style="font-size:13px;color:#444;margin:6px 0 8px;padding-left:18px;line-height:1.7">
+<li><b>하는 일</b>: 나무위키 최신판을 따라잡는 속도를 높입니다. 켠 유어위키들이 서로 다른 문서를 받아 나누므로, 참여자가 많을수록 빨라집니다.
+나무위키로 가는 요청은 늘지 않습니다(6초에 1건 그대로).</li>
+<li><b>켜 두기만 하면 됩니다</b>: 다른 유어위키를 알아서 찾아 주고받습니다. 운영하는 서버는 없습니다(BitTorrent 공용 연결망을 씁니다).</li>
+<li><b>켜면 생기는 일</b>: 내 컴퓨터가 받은 문서를 다른 유어위키에게도 나눠 주므로 인터넷 사용량이 늘고, 참여하고 있다는 사실이 공용 연결망에 보입니다.
+위키 화면과 내 IP 주소는 공개되지 않습니다(나가는 것은 서명된 나무위키 문서뿐, Cloudflare 임시 주소를 거침).</li>
+<li><b>엉터리 내용 막기</b>: 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고, 거짓이면 그 위키를 차단하고 받은 문서를 모두 되돌립니다.
+그래서 처음 몇 시간은 조금씩만 받고, 검증이 쌓이면 빨라집니다.</li>
+<li>회사·학교처럼 공용 연결망(UDP)을 막는 곳에서는 P2P 가 되지 않습니다(위키는 그대로 동작합니다).</li>
+</ul>
+<details style="font-size:13px"><summary>고급 설정</summary>
+<div style="margin-top:8px">내 ID: <code id="myid" style="word-break:break-all"></code>
+<button onclick="navigator.clipboard.writeText(document.getElementById('myid').textContent).catch(function(){})">복사</button></div>
+<div style="margin-top:8px">친구 ID (선택. 적으면 그 위키가 준 문서는 검증 기간 없이 바로 믿고 받습니다. 한 줄에 하나):<br>
 <textarea id="friends" rows="2" style="width:100%;font-size:13px"></textarea>
 <button onclick="api('/api/p2p_friends?ids='+encodeURIComponent(document.getElementById('friends').value)).then(load)">친구 저장</button></div>
-<p style="font-size:12px;color:#a60"><b>사보타주 방지</b>: 모르는 위키에게서도 자동으로 받지만, 믿음은 주소가 아니라 ID 의 <b>검증 실적</b>으로만 쌓입니다.
-갱신기가 P2P 로 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고, 5건을 통과한 ID 만 '검증된 ID' 가 됩니다.
-거짓이 확인되면 그 ID 를 차단하고 그 ID 에게서 받은 문서를 모두 되돌립니다. 새 ID(수습)들에게서는 <b>모두 합쳐</b> 한 시간에 200개까지만 받으므로,
-공격자가 ID 를 아무리 많이 만들어도 퍼질 수 있는 양은 늘지 않습니다. 내 문서와 절반 넘게 다른 내용은 나무위키에서 직접 확인합니다.
-받은 문서는 역사에 어느 ID 에서 왔는지 남습니다.</p>
-<div id="p2pst"></div><pre id="plog"></pre></section>
+<div style="margin-top:8px">중계소 주소 (선택. 누군가 고정 주소 서버에 띄운 중계소가 있으면 적으세요. 한 줄에 하나):<br>
+<textarea id="hubs" rows="2" style="width:100%;font-size:13px"></textarea>
+<button onclick="api('/api/p2p_hubs?hubs='+encodeURIComponent(document.getElementById('hubs').value)).then(load)">중계소 저장</button></div>
+<p style="font-size:12px;color:#a60">믿음은 주소가 아니라 ID 의 검증 실적으로만 쌓입니다. 검증 5건을 통과한 ID 만 '검증된 ID' 가 되고, 새 ID 들에게서는
+모두 합쳐 한 시간에 200개까지만 받습니다. 내 문서와 절반 넘게 다른 내용은 나무위키에서 직접 확인합니다. 받은 문서는 역사에 어느 ID 에서 왔는지 남습니다.</p>
+<div id="p2pst"></div><pre id="plog"></pre></details></section>
 <section><h2>위키 색</h2>
 <span id="swatch" style="display:inline-block;width:28px;height:28px;border-radius:6px;vertical-align:middle;border:1px solid #ccc"></span>
 <select id="preset" onchange="if(this.value)setColor(this.value)">
@@ -527,6 +531,9 @@ dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);
 var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.value==(p.on?'1':'0'));
 document.getElementById('myid').textContent=p.id||'(설치 뒤에 만들어집니다)';
+document.getElementById('p2pline').innerHTML=!p.on?'':(!s.running.engine?'위키를 켜면 P2P 도 함께 켜집니다':
+(p.dht_ok?'<span class=on>●</span> 참여 중 · 연결된 위키 '+p.peers_alive+'곳 · 최근 24시간 받은 문서 '+p.received_today+'개 · 내가 나눈 문서 '+p.sent+'개':
+'<span class=off>●</span> 다른 유어위키를 찾는 중… (몇 분 걸릴 수 있습니다)'));
 if(document.activeElement.id!=='hubs')document.getElementById('hubs').value=p.hubs_list.join('\n');
 if(document.activeElement.id!=='friends')document.getElementById('friends').value=p.friends_list.join('\n');
 document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · '+dot(s.running.p2pwin)+' P2P 창구 '+
