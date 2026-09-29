@@ -621,7 +621,7 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 <b>검증</b>: '나무위키 최신판' 이라고 적힌 판은 P2P 처럼 갱신기가 틈틈이 나무위키와 맞춰 봅니다(동기화가 켜져 있을 때).
 하나라도 거짓이면 그 파일에서 가져온 문서를 모두 되돌리고 나무위키에서 다시 받습니다. 직접 편집한 판은 나무위키와 비교할 수 없어 검증하지 않습니다.</p>
 <div id="iaudit" style="font-size:13px"></div>
-<pre id="ilog"></pre></details>
+<pre id="implog"></pre></details>
 <details class="sec" id="sec-update" data-default="0"><summary><h2>새 판 알림</h2><span class="sum" id="sum-update"></span></summary>
 <label><input type="checkbox" id="updon" onchange="api('/api/update_notice?on='+(this.checked?1:0)).then(load)"> GitHub 에 새 판이 나오면 알려 주기</label>
 <button onclick="api('/api/update_check').then(load)">지금 확인</button>
@@ -630,7 +630,7 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 새 판은 릴리스 내용을 보고 직접 받아 이 폴더에 덮어쓰세요(<code>wiki</code>·<code>data</code> 폴더는 그대로 두면 됩니다).</p></details>
 <details class="sec" id="sec-install" data-default="0"><summary><h2>설치 · 데이터</h2><span class="sum" id="sum-install"></span></summary>
 <button onclick="install('2026')">설치 / 다시 설치</button>
-<p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="ilog"></pre></details>
+<p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="inslog"></pre></details>
 <script>
 let listen="127.0.0.1:3000";
 async function api(p){const r=await fetch(p,{method:'POST'});return (await r.json()).msg}
@@ -679,7 +679,7 @@ document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업
 document.getElementById('plog').textContent=p.on?p.log.join(''):'';
 document.getElementById('sync').textContent='대기열 '+s.queue+'개'+(s.queue_eta?' (지금 속도면 약 '+s.queue_eta+' 뒤 비움)':'')+' · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
-document.getElementById('ilog').textContent=s.install_log.join('');
+document.getElementById('inslog').textContent=s.install_log.join('');
 var u=s.update||{},ub=document.getElementById('upd');document.getElementById('updon').checked=u.on!==false;
 ub.hidden=!(u.on!==false&&u.newer);
 if(u.newer&&ub.dataset.v!==u.latest){ub.dataset.v=u.latest;ub.innerHTML='<b>새 판이 나왔습니다: '+esc(u.name||u.latest)+'</b> ('+esc(u.published||'')+') · 지금 '+esc(u.current)+
@@ -695,7 +695,7 @@ if(!rng.init){rng.init=1;document.querySelectorAll('input[name=erange]').forEach
 document.querySelectorAll('input[name=irange]').forEach(x=>x.checked=x.value==s.import_range)}
 var fs=document.getElementById('ifile'),fk=s.import_files.join('\n');if(fs.dataset.k!==fk){var keep=fs.value;fs.dataset.k=fk;
 fs.innerHTML=s.import_files.length?s.import_files.map(f=>'<option>'+esc(f)+'</option>').join(''):'<option value="">(import 폴더가 비어 있음)</option>';if(keep)fs.value=keep}
-document.getElementById('impdir').textContent=s.import_dir;document.getElementById('ilog').textContent=s.import_log.join('');
+document.getElementById('impdir').textContent=s.import_dir;document.getElementById('implog').textContent=s.import_log.join('');
 var il=s.import_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')||l.startsWith('가져온')).pop();
 var ig=s.import_log.filter(l=>l.startsWith('가져온')).pop();
 document.getElementById('iprog').textContent=s.running.import?('가져오는 중 · '+(il||'준비 중…')):(ig||il||'');
