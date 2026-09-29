@@ -16,6 +16,14 @@
       "url": "https://github.com/openNAMU/openNAMU/releases/download/v4.3.6-beta.2/main.amd64.exe",
       "sha256": "4db7e3b222151d08b0366ef6b3850869fee43acb1e481039b4df463e71fac86d"
     },
+    "cloudflared-linux-amd64": {
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-linux-amd64",
+      "sha256": "77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2"
+    },
+    "cloudflared-linux-arm64": {
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-linux-arm64",
+      "sha256": "aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d"
+    },
     "cloudflared": {
       "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-windows-amd64.exe",
       "sha256": "f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2"
@@ -58,6 +66,7 @@
   },
   "default_edition": "2026",
   "p2p": {
-    "hubs": []
+    "hubs": [],
+    "seeds": []
   }
 }

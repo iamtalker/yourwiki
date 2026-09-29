@@ -1,4 +1,4 @@
-"""P2P 공유: 유어위키끼리 나무위키에서 받은 문서를 중계소를 거쳐 나눠 갖는다 (유어위키 1.2, 표준 라이브러리만 사용).
+"""P2P 공유: 유어위키끼리 나무위키에서 받은 문서를 서버 없이 나눠 갖는다 (유어위키 1.2, 표준 라이브러리만 사용).
 
 갱신기는 나무위키 서버 부담 때문에 6초에 1건만 받는다. 참여한 위키가 N곳이면 서로 다른 문서를 받아
 나누므로 전체로는 N배 빠르게 따라잡는다(위키마다 나무위키로 가는 요청은 그대로).
@@ -6,9 +6,13 @@
 구조
 - ID: 각 위키는 처음 켤 때 서명 열쇠(Ed25519)를 만들고, 공개 열쇠가 곧 ID 다(wiki/p2p_key.json).
   주소가 아니라 ID 로 구별하므로 주소가 바뀌어도 상관없고, 친구는 ID 로 한 번만 등록하면 된다.
-- 중계소(hub.py): 고정 주소가 있는 서버. 각 위키는 자기가 나무위키에서 받은 문서를 서명해서 보내고(push),
-  다른 위키가 보낸 것을 받아 온다(pull). 밖으로 나가는 연결만 쓰므로 공개 주소·공유기 설정이 필요 없다.
-  중계소는 서명과 해시를 바꿀 수 없어 내용을 조작하지 못한다(할 수 있는 건 '안 전하기'뿐).
+- 서버 없음(기본): 각 위키가 작은 읽기 전용 창구(hub_server.py --read-only, wiki/hub.db)를 열고,
+  자기가 나무위키에서 받은 문서를 서명해 거기 둔다. 창구는 P2P 전용 임시 공개 주소(cloudflared)로 연다.
+  '내 ID → 지금 창구 주소'는 BitTorrent 공용 연결망(DHT, dht.py)에 서명해 올려 두므로, 친구는 ID 만 알면
+  주소가 바뀌어도 찾아온다. 올릴 때 내가 아는 다른 ID 몇 개도 함께 적어, 친구의 친구도 찾아갈 수 있다.
+  받아서 서명을 확인한 남의 묶음도 내 창구에 두어 다시 나눠 준다(원래 위키가 꺼져 있어도 퍼지도록).
+- 중계소(선택): 누군가 고정 주소 서버에 중계소(hub.py)를 띄우면 거기로도 보내고 받는다. 없어도 된다.
+- 서명과 해시 때문에 중간에 거친 창구·중계소는 내용을 바꾸지 못한다(할 수 있는 건 '안 전하기'뿐).
 
 누구를 믿나 (사보타주 방지)
 - 등급: 친구(내가 적은 ID) > 검증된 ID(나무위키와 직접 맞춰 본 검증을 5건 넘게 통과, 거짓 0건) > 수습 ID(그 밖).
@@ -22,7 +26,7 @@
 - 미래 시각, 서명이 맞지 않는 묶음, 변환기 판이 다른 문서(친구 것 제외)는 받지 않는다.
 
 사용:
-  python p2p.py <wiki 폴더> --watch [--hub URL ...] [--friend ID ...]
+  python p2p.py <wiki 폴더> --watch [--friend ID ...] [--tunnel-log p2p-tunnel.log | --self-url URL] [--hub URL ...]
   python p2p.py <wiki 폴더> --id        # 내 ID 보기
 """
 import argparse
@@ -39,6 +43,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ed25519  # noqa: E402
+import hub as hubmod  # noqa: E402
 from hub import canonical  # noqa: E402
 
 UA = "YourWiki-P2P/2 (+https://github.com/iamtalker/yourwiki)"
@@ -58,6 +63,12 @@ AUDIT_SHARE = 0.2        # 갱신기 요청 중 검증에 쓰는 몫
 MODIFIED_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 HEX64 = re.compile(r"[0-9a-f]{64}$")
 FOOTER_RE = re.compile(r"\n\n----\n \* 출처: \[\[https://namu\.wiki/w/.*\Z", re.S)
+DHT_EVERY = 1800         # 내 주소를 DHT 에 다시 올리는 주기(항목은 약 2시간 뒤 사라진다)
+RESOLVE_EVERY = 1800     # 한 ID 의 주소를 다시 찾는 주기
+MAX_RESOLVE = 30         # 한 번에 주소를 찾는 ID 수
+PEX_SHARE = 20           # 내 DHT 기록에 함께 적는 다른 ID 수
+FETCH_TRIES = 3          # 본문을 이만큼 못 받으면 새 판이 올라올 때까지 그 사본은 건너뛴다
+PEER_FAILS = 10          # 이만큼 연달아 실패하면 주소를 잊고 다시 찾는다
 TIER_NAMES = {"friend": "친구", "proven": "검증된 ID", "probation": "수습 ID"}
 _conv = None
 
@@ -141,10 +152,14 @@ def init(q):
                                            hub text, primary key (node, title));
         create index if not exists hindex_title on hindex(title);
         create table if not exists p2p_backup (title text primary key, data text, last_edit text, at real, node text);
+        create table if not exists peers (node text primary key, url text, cursor int default 0, last_ok real default 0,
+                                          fails int default 0, resolved real default 0);
+        create table if not exists meta (k text primary key, v text);
     """)
     for table, col in (("shared", "node text default ''"), ("shared", "conv text default ''"),
                        ("shared", "audited int default 0"), ("shared", "tier text default ''"),
-                       ("hindex", "seen real default 0"), ("nodes", "strikes int default 0")):
+                       ("hindex", "seen real default 0"), ("hindex", "tries int default 0"),
+                       ("nodes", "strikes int default 0")):
         try:
             q.execute(f"alter table {table} add column {col}")
         except sqlite3.OperationalError:
@@ -172,8 +187,8 @@ def best_copy(q, title, since=0.0):
     """중계소에서 본 이 문서의 사본 중 받을 만한 가장 새것 (node, modified, sha, tier, hub, conv). 없으면 None."""
     rows = q.execute(
         "select i.node, i.modified, i.sha, i.hub, i.conv, n.trusted, n.audits_ok, n.audits_bad from hindex i "
-        "join nodes n on n.id = i.node where i.title = ? and i.at >= ? and n.banned = 0 "
-        "and (n.trusted = 1 or i.conv = ?)", (title, since, conv_id())).fetchall()
+        "join nodes n on n.id = i.node where i.title = ? and i.at >= ? and n.banned = 0 and i.tries < ? "
+        "and (n.trusted = 1 or i.conv = ?)", (title, since, FETCH_TRIES, conv_id())).fetchall()
     rank = {"friend": 2, "proven": 1, "probation": 0}
     best = None
     for node, modified, sha, hub, conv, trusted, ok, bad in rows:
@@ -191,10 +206,10 @@ def trusted_copy(q, title, since=0.0):
 
 
 # ---------------------------------------------------------------- 통신
-def http_json(url, data=None):
+def http_json(url, data=None, timeout=60):
     req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read(MAX_BODY + 1)
     except urllib.error.HTTPError as e:
         try:
@@ -215,12 +230,51 @@ def norm_url(url):
     return f"{u.scheme}://{u.netloc}{u.path}".rstrip("/")
 
 
+def public_url_ok(url, resolve=True):
+    """모르는 ID 가 알려 준 주소는 https 이고 사설·내부 주소가 아니어야 한다(내 공유기·내부망을 찌르지 않게)."""
+    import ipaddress
+    import socket
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != "https" or not u.hostname or u.hostname == "localhost":
+        return False
+    hosts = [u.hostname]
+    if resolve:
+        try:
+            hosts = [ai[4][0] for ai in socket.getaddrinfo(u.hostname, u.port or 443)]
+        except OSError:
+            return False
+    for h in hosts:
+        try:
+            if not ipaddress.ip_address(h).is_global:
+                return False
+        except ValueError:
+            continue
+    return True
+
+
+def get_meta(q, k, default=""):
+    r = q.execute("select v from meta where k = ?", (k,)).fetchone()
+    return r[0] if r else default
+
+
+def set_meta(q, k, v):
+    q.execute("insert or replace into meta values (?, ?)", (k, str(v)))
+
+
 class Worker:
-    def __init__(self, wiki_dir, hubs=(), friends=()):
+    def __init__(self, wiki_dir, hubs=(), friends=(), self_url="", tunnel_log="", use_dht=True, seeds=(),
+                 bootstrap=None):
         self.wiki_dir = wiki_dir
         self.q = init(sqlite3.connect(os.path.join(wiki_dir, "updater.db"), timeout=30))
         self.secret, self.me = load_key(wiki_dir)
-        self.synced, self.clock = {}, 0.0
+        self.synced, self.clock, self.gave_up = {}, 0.0, 0
+        self.hubdb = os.path.join(wiki_dir, "hub.db")
+        self.self_url, self.tunnel_log = norm_url(self_url), tunnel_log
+        self.use_dht, self.bootstrap, self._dht = use_dht, bootstrap, None
+        for sd in seeds:
+            sd = sd.strip().lower()
+            if HEX64.match(sd) and sd != self.me:
+                self.q.execute("insert or ignore into nodes (id, first_seen) values (?, ?)", (sd, time.time()))
         hubs = [u for u in (norm_url(h) for h in hubs) if u]
         for h in hubs:
             self.q.execute("insert or ignore into hubs (url) values (?)", (h,))
@@ -234,6 +288,110 @@ class Worker:
                 if self.q.execute("select banned from nodes where id = ?", (f,)).fetchone()[0]:
                     log(f"경고: 친구 ID {f[:12]}… 는 검증에서 거짓 내용이 확인되어 차단된 상태입니다.")
         self.q.commit()
+
+    # -- 내 창구: 내가 나무위키에서 받은 문서를 서명해 내 hub.db 에 둔다(다른 위키가 가져간다)
+    def local_publish(self):
+        done = float(get_meta(self.q, "local_pushed", "0") or 0)
+        n = 0
+        db = hubmod.open_db(self.hubdb)
+        try:
+            while True:
+                rows = self.q.execute("select title, modified, sha, conv, at, text, redirect from shared "
+                                      "where src = 'namu' and at > ? and modified != '' order by at limit ?",
+                                      (done, PUSH_BATCH)).fetchall()
+                if not rows:
+                    break
+                items = [[t, m, s, c, a] for t, m, s, c, a, _, _ in rows]
+                sig = ed25519.sign(self.secret, canonical(items))
+                hubmod.store(db, self.me, items, {s: [x, r or ""] for _, _, s, _, _, x, r in rows}, sig)
+                db.commit()
+                done = rows[-1][4]
+                set_meta(self.q, "local_pushed", done)
+                self.q.commit()
+                n += len(rows)
+        finally:
+            db.close()
+        return n
+
+    def my_url(self):
+        """다른 위키가 내 창구를 찾아올 주소(--self-url, 또는 P2P 전용 터널 기록에서)."""
+        if self.tunnel_log:
+            try:
+                for line in open(self.tunnel_log, encoding="utf-8", errors="replace").readlines()[-300:]:
+                    m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+                    if m:
+                        self.self_url = m.group(0)
+            except OSError:
+                pass
+        return self.self_url
+
+    # -- DHT: 내 주소를 올리고, 친구·아는 ID 의 주소를 찾는다
+    def dht(self):
+        if self._dht is None:
+            import dht
+            self._dht = dht.DHT(bootstrap=self.bootstrap)
+        return self._dht
+
+    def dht_publish(self):
+        url = self.my_url()
+        if not url or not self.use_dht:
+            return False
+        if url == get_meta(self.q, "dht_url") and time.time() - float(get_meta(self.q, "dht_at", "0") or 0) < DHT_EVERY:
+            return False
+        import dht
+        known = [r[0] for r in self.q.execute(
+            "select p.node from peers p join nodes n on n.id = p.node where n.banned = 0 and p.last_ok > ? "
+            "order by n.trusted desc, n.audits_ok desc, random() limit ?", (time.time() - 86400, PEX_SHARE))]
+        value = {"u": url, "p": dht.pack_ids(known), "t": int(time.time())}
+        ok, seq = self.dht().put(self.secret, bytes.fromhex(self.me), value, int(time.time()))
+        if ok:
+            set_meta(self.q, "dht_url", url)
+            set_meta(self.q, "dht_at", time.time())
+            self.q.commit()
+            log(f"공용 연결망(DHT)에 내 주소를 올렸습니다: {url} (노드 {ok}곳)")
+        else:
+            log("공용 연결망(DHT)에 닿지 않습니다. UDP 가 막힌 네트워크일 수 있습니다(중계소가 있으면 그쪽으로는 계속 됩니다).")
+            set_meta(self.q, "dht_at", time.time() - DHT_EVERY + 300)  # 5분 뒤 다시
+            self.q.commit()
+        return bool(ok)
+
+    def dht_resolve(self):
+        """친구 → 검증된 ID → 그 밖의 아는 ID 순서로, 오래전에 찾은 것부터 주소를 찾는다."""
+        if not self.use_dht:
+            return 0
+        import dht
+        now = time.time()
+        cand = [r[0] for r in self.q.execute(
+            "select n.id from nodes n left join peers p on p.node = n.id where n.banned = 0 and n.id != ? "
+            "and coalesce(p.resolved, 0) < ? order by n.trusted desc, n.audits_ok desc, coalesce(p.resolved, 0) "
+            "limit ?", (self.me, now - RESOLVE_EVERY, MAX_RESOLVE))]
+        found = 0
+        for node in cand:
+            self.q.execute("insert into peers (node, resolved) values (?, ?) on conflict(node) do update set "
+                           "resolved = excluded.resolved", (node, now))
+            try:
+                r = self.dht().get(bytes.fromhex(node))
+            except (OSError, ValueError) as e:
+                log(f"DHT 찾기 실패: {e}")
+                break
+            if not r or not isinstance(r[1], dict):
+                # 못 찾음(아직 안 켰거나 방금 켬) → 30분이 아니라 5분 뒤에 다시 찾는다
+                self.q.execute("update peers set resolved = ? where node = ?", (now - RESOLVE_EVERY + 300, node))
+                continue
+            v = r[1]
+            url = norm_url((v.get(b"u") or b"").decode("utf-8", "replace"))
+            trusted = self.q.execute("select trusted from nodes where id = ?", (node,)).fetchone()[0]
+            if url and (trusted or public_url_ok(url)):
+                old = self.q.execute("select url from peers where node = ?", (node,)).fetchone()[0]
+                self.q.execute("update peers set url = ?, fails = 0 where node = ?", (url, node))
+                found += 1
+                if old != url:
+                    log(f"ID {node[:12]}… 의 주소를 찾았습니다: {url}")
+            for other in dht.unpack_ids(v.get(b"p") or b"")[:PEX_SHARE]:  # 친구의 친구
+                if other != self.me:
+                    self.q.execute("insert or ignore into nodes (id, first_seen) values (?, ?)", (other, now))
+        self.q.commit()
+        return found
 
     # -- 보내기: 내가 나무위키에서 직접 받은 문서만 서명해서 보낸다
     def push(self, hub):
@@ -273,9 +431,15 @@ class Worker:
             limit = PUSH_BATCH
 
     # -- 받기: 서명을 직접 확인한 묶음만 목록에 넣는다(중계소를 믿지 않는다)
-    def pull(self, hub):
-        cursor = self.q.execute("select cursor from hubs where url = ?", (hub,)).fetchone()[0] or 0
+    def pull(self, hub, peer=None):
+        """중계소(hub) 또는 다른 위키의 창구(peer=그 ID)에서 새 묶음을 받는다. 커서는 창구 주인 ID 에 붙여 두므로
+        그 위키의 임시 주소가 바뀌어도 처음부터 다시 받지 않는다. 서명을 확인한 묶음은 내 창구에도 둬서 다시 나눈다."""
+        if peer:
+            cursor = self.q.execute("select cursor from peers where node = ?", (peer,)).fetchone()[0] or 0
+        else:
+            cursor = self.q.execute("select cursor from hubs where url = ?", (hub,)).fetchone()[0] or 0
         got, bad = 0, 0
+        relay = hubmod.open_db(self.hubdb)
         future = now_str(CLOCK_SLACK)
         for _ in range(20):
             r = http_json(f"{hub}/_hub/changes?since={int(cursor)}")
@@ -294,6 +458,7 @@ class Worker:
                 self.q.execute("insert or ignore into nodes (id, first_seen) values (?, ?)", (node, time.time()))
                 if self.q.execute("select banned from nodes where id = ?", (node,)).fetchone()[0]:
                     continue
+                hubmod.store(relay, node, items, {}, sig)  # 대신 전하기(서명은 원래 위키의 것 그대로)
                 rows = []
                 for it in items:
                     if isinstance(it, list) and len(it) == 5 and isinstance(it[0], str) and isinstance(it[1], str) \
@@ -306,13 +471,19 @@ class Worker:
                     "on conflict(node, title) do update set modified = excluded.modified, conv = excluded.conv, "
                     "at = excluded.at, hub = excluded.hub, "
                     "seen = case when hindex.sha = excluded.sha then hindex.seen else excluded.seen end, "
+                    "tries = case when hindex.sha = excluded.sha then hindex.tries else 0 end, "
                     "sha = excluded.sha", rows)
                 got += len(rows)
             cursor = max(cursor, int(r.get("next", cursor)))
-            self.q.execute("update hubs set cursor = ? where url = ?", (cursor, hub))
+            if peer:
+                self.q.execute("update peers set cursor = ? where node = ?", (cursor, peer))
+            else:
+                self.q.execute("update hubs set cursor = ? where url = ?", (cursor, hub))
+            relay.commit()
             self.q.commit()
             if not r.get("more"):
                 break
+        relay.close()
         if bad:
             log(f"{hub}: 서명이 맞지 않는 묶음 {bad}개를 버렸습니다(중계소가 내용을 바꿨을 수 있음)")
         return got
@@ -320,10 +491,10 @@ class Worker:
     def wanted(self, limit=300):
         """중계소에 내 것보다 새 사본이 있는 문서 제목들."""
         return [r[0] for r in self.q.execute(
-            "select i.title from hindex i join nodes n on n.id = i.node and n.banned = 0 "
+            "select i.title from hindex i join nodes n on n.id = i.node and n.banned = 0 and i.tries < ? "
             "left join shared s on s.title = i.title left join fetched f on f.title = i.title "
             "group by i.title having max(i.modified) > max(coalesce(s.modified, ''), coalesce(f.namu_modified, '')) "
-            "order by random() limit ?", (limit,))]
+            "order by random() limit ?", (FETCH_TRIES, limit))]
 
     def over_cap(self, node, tier):
         since = time.time() - 3600
@@ -336,11 +507,13 @@ class Worker:
         return n >= CAP_NODE
 
     def fetch_doc(self, hub, sha):
-        hubs = [hub] + [h for h, in self.q.execute("select url from hubs where url != ? order by last_ok desc", (hub,))]
+        hubs = [hub] + [h for h, in self.q.execute(
+            "select url from (select url, last_ok from hubs union all select url, last_ok from peers "
+            "where url is not null and url != '') where url != ? order by last_ok desc limit 12", (hub,))]
         err = None
         for h in hubs:
             try:
-                d = http_json(f"{h}/_hub/doc?sha={sha}")
+                d = http_json(f"{h}/_hub/doc?sha={sha}", timeout=20)
                 text, redirect = d.get("text"), d.get("redirect") or ""
                 if isinstance(text, str) and len(text) <= MAX_TEXT and digest(text, redirect) == sha:
                     return text, redirect
@@ -357,7 +530,17 @@ class Worker:
         node, modified, sha, tier, hub, conv = c
         if modified > now_str(CLOCK_SLACK) or self.over_cap(node, tier):
             return False
-        text, redirect = self.fetch_doc(hub, sha)
+        try:
+            text, redirect = self.fetch_doc(hub, sha)
+        except (OSError, ValueError, urllib.error.URLError):
+            # 본문을 가진 창구를 못 찾음. 몇 번 해 보고 안 되면 새 판이 올라올 때까지 이 사본은 건너뛴다.
+            self.q.execute("update hindex set tries = tries + 1 where node = ? and title = ? and sha = ?",
+                           (node, title, sha))
+            self.q.commit()
+            if self.q.execute("select tries from hindex where node = ? and title = ?", (node, title)).fetchone()[0] \
+                    >= FETCH_TRIES:
+                self.gave_up += 1
+            return False
         local = current(self.wiki_dir, title)
         if local and not redirect and len(local[0]) >= BIG_MIN and similarity(local[0], text) < 1 - BIG_CHANGE:
             # 큰 변경은 P2P 로 받지 않는다. 나무위키에서 직접 받도록 대기열에 넣는다.
@@ -372,6 +555,10 @@ class Worker:
         info = {"redirect": redirect} if redirect else {}
         changed = updater.apply(self.wiki_dir, title, text, info, modified, via=f"ID {node[:12]}…")
         record(self.q, title, text, redirect, modified, "p2p", node=node, tier=tier, conv=conv)
+        relay = hubmod.open_db(self.hubdb)
+        relay.execute("insert or ignore into docs values (?, ?, ?)", (sha, text, redirect))
+        relay.commit()
+        relay.close()
         self.q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), modified))
         self.q.execute("delete from queue where title = ?", (title,))
         self.q.commit()
@@ -380,6 +567,33 @@ class Worker:
 
     def round(self):
         now = time.time()
+        n = self.local_publish()
+        if n:
+            log(f"내 창구에 새 문서 {n}개를 올렸습니다")
+        try:
+            self.dht_publish()
+            self.dht_resolve()
+        except OSError as e:
+            log(f"DHT 오류: {e}")
+        for node, url in self.q.execute(
+                "select p.node, p.url from peers p join nodes n on n.id = p.node where n.banned = 0 "
+                "and p.url is not null and p.url != '' and p.node != ?", (self.me,)).fetchall():
+            if url == self.my_url() or now - self.synced.get(node, 0) < SYNC_EVERY:
+                continue
+            self.synced[node] = now
+            try:
+                got = self.pull(url, peer=node)
+                self.q.execute("update peers set last_ok = ?, fails = 0 where node = ?", (time.time(), node))
+                if got:
+                    log(f"ID {node[:12]}… 의 창구에서 새 목록 {got}개")
+            except (OSError, ValueError, urllib.error.URLError) as e:
+                self.q.execute("update peers set fails = fails + 1 where node = ?", (node,))
+                fails = self.q.execute("select fails from peers where node = ?", (node,)).fetchone()[0]
+                if fails >= PEER_FAILS:  # 꺼졌거나 주소가 바뀌었다 → 잊고 다음에 DHT 로 다시 찾는다
+                    self.q.execute("update peers set url = '', resolved = 0 where node = ?", (node,))
+                elif fails == 1:
+                    log(f"ID {node[:12]}… 의 창구에 닿지 않음: {e}")
+            self.q.commit()
         for (hub,) in self.q.execute("select url from hubs").fetchall():
             if now - self.synced.get(hub, 0) < SYNC_EVERY:
                 continue
@@ -400,21 +614,24 @@ class Worker:
                 if n in (1, 5, 50):
                     log(f"중계소 연결 실패({n}번째): {hub} — {e}")
             self.q.commit()
-        done = 0
+        done, self.gave_up = 0, 0
         for title in self.wanted():
             try:
                 done += self.take(title)
             except (OSError, ValueError, urllib.error.URLError) as e:
                 log(f"받지 못함: {title} — {e}")
             self.q.commit()
+        if self.gave_up:
+            log(f"본문을 가진 곳이 없어 {self.gave_up}개 문서를 건너뜀(새 판이 올라오면 다시 받습니다)")
         return done
 
     def watch(self):
         hubs = [h for h, in self.q.execute("select url from hubs")]
         friends = self.q.execute("select count(*) from nodes where trusted = 1").fetchone()[0]
-        log(f"P2P 시작 · 내 ID {self.me} · 중계소 {len(hubs)}곳 · 친구 {friends}명")
-        if not hubs:
-            log("중계소가 없습니다. 관리판에서 중계소 주소를 적어 주세요.")
+        log(f"P2P 시작 · 내 ID {self.me} · 친구 {friends}명 · 중계소 {len(hubs)}곳(선택) · "
+            f"공용 연결망(DHT) {'사용' if self.use_dht else '끔'}")
+        if not friends and not hubs:
+            log("친구 ID 를 관리판에 적으면 서로 찾아 문서를 나눕니다(친구의 친구도 차례로 찾아갑니다).")
         while True:
             done = self.round()
             time.sleep(5 if done else SYNC_EVERY)
@@ -569,6 +786,14 @@ def restore(q, wiki_dir, title, node):
     q.execute("delete from p2p_backup where title = ?", (title,))
 
 
+def default_seeds():
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return json.load(open(os.path.join(root, "sources.json"), encoding="utf-8")).get("p2p", {}).get("seeds", [])
+    except (OSError, ValueError):
+        return []
+
+
 def default_hubs():
     try:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -584,11 +809,17 @@ def main():
     ap.add_argument("--id", action="store_true", help="내 ID 를 보여 주고 끝낸다")
     ap.add_argument("--hub", action="append", default=[], help="중계소 주소(여러 번 줄 수 있음)")
     ap.add_argument("--friend", action="append", default=[], help="친구 ID(여러 번 줄 수 있음)")
+    ap.add_argument("--self-url", default="", help="다른 위키가 내 창구를 찾아올 주소(고정 주소가 있을 때)")
+    ap.add_argument("--tunnel-log", default="", help="P2P 전용 터널(cloudflared) 기록 파일에서 내 주소를 읽는다")
+    ap.add_argument("--no-dht", action="store_true", help="공용 연결망(DHT)을 쓰지 않는다(중계소만)")
+    ap.add_argument("--dht-bootstrap", action="append", default=[], help="시험용 DHT 시작 노드 host:port")
     args = ap.parse_args()
     if args.id:
         print(my_id(args.wiki_dir))
         return
-    w = Worker(args.wiki_dir, args.hub or default_hubs(), args.friend)
+    boot = [(h.rsplit(":", 1)[0], int(h.rsplit(":", 1)[1])) for h in args.dht_bootstrap] or None
+    w = Worker(args.wiki_dir, args.hub or default_hubs(), args.friend, args.self_url, args.tunnel_log,
+               not args.no_dht, default_seeds(), boot)
     if not args.watch:
         print(w.round(), "개 받음")
         return

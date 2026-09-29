@@ -52,7 +52,6 @@ def open_db(path):
 
 
 def submit(db, body):
-    import hashlib
     try:
         m = json.loads(body)
         node, items, docs, sig = m["node"], m["items"], m.get("docs", {}), bytes.fromhex(m["sig"])
@@ -82,28 +81,43 @@ def submit(db, body):
     if used + len(items) > NODE_HOURLY:
         return 429, {"error": "이 ID 의 한 시간 한도를 넘음"}
     # 본문: 해시가 맞는 것만. 이미 있는 본문은 다시 보내지 않아도 된다.
-    from p2p import digest
     for it in items:
-        sha = it[2]
-        if db.execute("select 1 from docs where sha = ?", (sha,)).fetchone():
-            continue
-        d = docs.get(sha)
-        if not (isinstance(d, list) and len(d) == 2 and isinstance(d[0], str) and isinstance(d[1], str)
-                and len(d[0]) <= MAX_TEXT and digest(d[0], d[1]) == sha):
+        if not db.execute("select 1 from docs where sha = ?", (it[2],)).fetchone() and not good_doc(docs.get(it[2]), it[2]):
             return 400, {"error": f"본문이 없거나 해시가 다름: {it[0]}"}
-        db.execute("insert or ignore into docs values (?, ?, ?)", (sha, d[0], d[1]))
-    bid = hashlib.sha256(canonical(items) + bytes.fromhex(node)).hexdigest()
-    cur = db.execute("insert or ignore into batches (id, node, items, sig, at) values (?, ?, ?, ?, ?)",
-                     (bid, node, json.dumps(items, ensure_ascii=False, separators=(",", ":")), sig.hex(), now))
-    if cur.rowcount:
-        seq = cur.lastrowid
-        db.executemany("insert into items values (?, ?, ?)", [(seq, it[0], it[2]) for it in items])
+    bid, added = store(db, node, items, docs, sig)
+    if added:
         db.execute("insert into quota values (?, ?, ?) on conflict(node, hour) do update set n = n + ?",
                    (node, hour, len(items), len(items)))
-    if now % 3600 < 60:  # 가끔 오래된 것 정리
-        prune(db)
     db.commit()
     return 200, {"ok": True, "id": bid}
+
+
+def good_doc(d, sha):
+    from p2p import digest
+    return (isinstance(d, list) and len(d) == 2 and isinstance(d[0], str) and isinstance(d[1], str)
+            and len(d[0]) <= MAX_TEXT and digest(d[0], d[1]) == sha)
+
+
+def store(db, node, items, docs, sig):
+    """서명된 묶음 하나를 저장한다(서명은 부른 쪽이 확인). 본문은 해시가 맞는 것만 넣는다.
+
+    서버 없는 P2P 에서는 각 위키가 자기 묶음과, 다른 위키에게서 받아 서명을 확인한 묶음을 여기 저장해
+    다시 나눠 준다(원래 보낸 위키가 꺼져 있어도 퍼지도록). 그때는 본문이 없는 항목도 있을 수 있다.
+    """
+    import hashlib
+    for it in items:
+        d = docs.get(it[2])
+        if d is not None and good_doc(d, it[2]):
+            db.execute("insert or ignore into docs values (?, ?, ?)", (it[2], d[0], d[1]))
+    bid = hashlib.sha256(canonical(items) + bytes.fromhex(node)).hexdigest()
+    cur = db.execute("insert or ignore into batches (id, node, items, sig, at) values (?, ?, ?, ?, ?)",
+                     (bid, node, json.dumps(items, ensure_ascii=False, separators=(",", ":")),
+                      sig.hex() if isinstance(sig, bytes) else sig, time.time()))
+    if cur.rowcount:
+        db.executemany("insert into items values (?, ?, ?)", [(cur.lastrowid, it[0], it[2]) for it in items])
+    if time.time() % 3600 < 60:  # 가끔 오래된 것 정리
+        prune(db)
+    return bid, bool(cur.rowcount)
 
 
 def prune(db):
@@ -114,8 +128,8 @@ def prune(db):
     db.execute("delete from quota where hour < ?", (int(time.time() // 3600) - 48,))
 
 
-def handle(db_path, method, path, query, body):
-    """(상태 코드, JSON 객체)."""
+def handle(db_path, method, path, query, body, read_only=False):
+    """(상태 코드, JSON 객체). read_only 면 남이 올리는 것(submit)은 받지 않는다(서버 없는 P2P 의 각 위키 창구)."""
     db = open_db(db_path)
     try:
         if path == "/_hub/hello":
@@ -123,6 +137,8 @@ def handle(db_path, method, path, query, body):
             last = db.execute("select max(seq) from batches").fetchone()[0] or 0
             return 200, {"app": APP, "v": VERSION, "nodes": n, "seq": last}
         if path == "/_hub/submit" and method == "POST":
+            if read_only:
+                return 403, {"error": "이 창구는 읽기 전용입니다"}
             return submit(db, body)
         if path == "/_hub/changes":
             try:

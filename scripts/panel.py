@@ -81,12 +81,31 @@ def start_updater():
 
 
 def start_p2p():
-    """P2P 작업자: 내가 나무위키에서 받은 문서를 중계소로 보내고, 다른 유어위키가 보낸 것을 받아 온다."""
-    stop("p2p")
+    """P2P: 내 창구(읽기 전용, 127.0.0.1:3002) + 그 창구만 여는 임시 공개 주소 + 작업자.
+
+    위키 자체를 공개하는 [공개하기]와는 별개다. P2P 창구로는 서명된 문서 묶음만 나가고 위키 화면은 나가지 않는다.
+    """
+    for n in ("p2p", "p2ptunnel", "p2pwin"):
+        stop(n)
     s = settings()
     if not s.get("p2p") or not os.path.exists(os.path.join(WIKI, "data.db")):
         return
+    spawn("p2pwin", [sys.executable, os.path.join(SCRIPTS, "hub_server.py"), "--read-only",
+                     "--listen", "127.0.0.1:" + str(P2P_PORT), "--db", os.path.join(WIKI, "hub.db")], "p2p-window.log")
     args = [sys.executable, os.path.join(SCRIPTS, "p2p.py"), WIKI, "--watch"]
+    if s.get("p2p_url"):  # 고정 주소(내 도메인 등)가 있으면 임시 주소를 만들지 않는다
+        args += ["--self-url", s["p2p_url"]]
+    else:
+        try:
+            import cloudflared
+            exe = cloudflared.ensure()
+            open(os.path.join(ROOT, "p2p-tunnel.log"), "w").close()
+            spawn("p2ptunnel", [exe, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{P2P_PORT}"],
+                  "p2p-tunnel.log")
+            args += ["--tunnel-log", os.path.join(ROOT, "p2p-tunnel.log")]
+        except Exception as e:  # 터널이 없으면 받기만 한다
+            with open(os.path.join(ROOT, "p2p.log"), "a", encoding="utf-8") as f:
+                f.write(f"P2P 창구 공개 주소를 만들지 못했습니다(받기만 합니다): {e}\n")
     for h in p2p_hubs():
         args += ["--hub", h]
     for f in s.get("p2p_friends", []):
@@ -133,7 +152,7 @@ def start_wiki():
 
 def stop_wiki():
     with lock:
-        for n in ("tunnel", "p2p", "updater", "proxy", "engine"):
+        for n in ("tunnel", "p2p", "p2ptunnel", "p2pwin", "updater", "proxy", "engine"):
             stop(n)
     return "껐습니다"
 
@@ -150,35 +169,18 @@ def run_install(edition):
     return "설치를 시작했습니다"
 
 
-def ensure_cloudflared():
-    """터널 프로그램(cloudflared)을 공식 배포처에서 받아 SHA-256 으로 검증한다."""
-    import hashlib
-    import urllib.request
-    exe = os.path.join(ROOT, "tools", "cloudflared.exe")
-    t = json.load(open(os.path.join(ROOT, "sources.json"), encoding="utf-8"))["tools"]["cloudflared"]
-    def ok():
-        return os.path.exists(exe) and hashlib.sha256(open(exe, "rb").read()).hexdigest() == t["sha256"]
-    if not ok():
-        urllib.request.urlretrieve(t["url"], exe)
-        if not ok():
-            os.remove(exe)
-            raise RuntimeError("터널 프로그램 해시가 맞지 않습니다")
-    return exe
-
-
 def tunnel(on):
     if not on:
         stop("tunnel")
         _cache.pop("url", None)
         return "공개를 껐습니다"
-    if not WIN:
-        return "리눅스 서버는 server/yourwiki.sh 를 쓰세요"
     if not alive("proxy"):
         return "먼저 위키를 켜세요"
     if alive("tunnel"):
         return "이미 공개 중입니다"
     try:
-        exe = ensure_cloudflared()
+        import cloudflared
+        exe = cloudflared.ensure()
     except Exception as e:
         return f"터널 프로그램을 받지 못했습니다: {e}"
     open(os.path.join(ROOT, "tunnel.log"), "w").close()
@@ -201,13 +203,15 @@ def set_p2p(on=None, hubs=None, friends=None):
             start_updater()
             start_p2p()
     if on is False:
-        stop("p2p")
+        for n in ("p2p", "p2ptunnel", "p2pwin"):
+            stop(n)
     return "P2P 설정을 바꿨습니다"
 
 
 def p2p_status():
     out = {"hubs_alive": 0, "nodes": 0, "proven": 0, "friends": 0, "banned": 0, "audits_ok": 0, "unaudited": 0,
-           "sent": 0, "received_today": 0, "id": ""}
+           "sent": 0, "received_today": 0, "id": "", "peers_found": 0, "peers_alive": 0, "window_url": "",
+           "dht_ok": False}
     if not os.path.exists(os.path.join(WIKI, "data.db")):
         return out
     try:
@@ -226,6 +230,10 @@ def p2p_status():
         out["unaudited"] = one("select count(*) from shared where src = 'p2p' and audited = 0")
         out["sent"] = one("select count(*) from shared where src = 'namu'")
         out["received_today"] = one("select count(*) from shared where src = 'p2p' and at > ?", now - 86400)
+        out["peers_found"] = one("select count(*) from peers where url is not null and url != ''")
+        out["peers_alive"] = one("select count(*) from peers where last_ok > ?", now - 600)
+        out["window_url"] = p2p.get_meta(q, "dht_url")
+        out["dht_ok"] = now - float(p2p.get_meta(q, "dht_at", "0") or 0) < p2p.DHT_EVERY * 2 and bool(out["window_url"])
         q.close()
     except sqlite3.Error:
         pass
@@ -262,6 +270,7 @@ def tunnel_url():
 
 
 KIT_VERSION = "1.2"
+P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
 def fmt_secs(sec):
@@ -405,6 +414,8 @@ def status():
     st["info"] = info()
     st["running"]["tunnel"] = alive("tunnel")
     st["running"]["p2p"] = alive("p2p")
+    st["running"]["p2ptunnel"] = alive("p2ptunnel")
+    st["running"]["p2pwin"] = alive("p2pwin")
     st["running"]["export"] = alive("export")
     st["export_log"] = tail("export.log", 6)
     st["export_dir"] = EXPORT_DIR
@@ -438,14 +449,15 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
 <label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
 <p style="font-size:13px;color:#555">갱신기는 나무위키 서버 부담 때문에 6초에 1건만 받습니다. P2P 를 켜면 참여한 유어위키들이
-<b>서로 다른 문서</b>를 받아 <b>중계소</b>를 거쳐 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).
-중계소로 보내고 받기만 하므로 공개 주소나 공유기 설정이 필요 없습니다.</p>
+<b>서로 다른 문서</b>를 받아 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).
+<b>서버가 필요 없습니다</b>: 켜면 내 위키가 작은 'P2P 창구'를 열고(서명된 문서만 나가며 위키 화면은 공개되지 않습니다),
+그 창구 주소를 BitTorrent 공용 연결망(DHT)에 내 ID 로 적어 둡니다. 친구는 내 ID 만 알면 주소가 바뀌어도 찾아옵니다.</p>
 <div style="font-size:13px">내 ID (친구에게 알려 주세요): <code id="myid" style="word-break:break-all"></code>
 <button onclick="navigator.clipboard.writeText(document.getElementById('myid').textContent)">복사</button></div>
-<div style="font-size:13px;margin-top:8px">중계소 주소 (한 줄에 하나, 비우면 기본 중계소):<br>
+<div style="font-size:13px;margin-top:8px">중계소 주소 (선택. 누군가 고정 주소 서버에 띄운 중계소가 있으면 적으세요):<br>
 <textarea id="hubs" rows="2" style="width:100%;font-size:13px"></textarea>
 <button onclick="api('/api/p2p_hubs?hubs='+encodeURIComponent(document.getElementById('hubs').value)).then(load)">중계소 저장</button></div>
-<div style="font-size:13px;margin-top:8px">친구 ID (한 줄에 하나. 친구가 보낸 문서는 바로 받습니다):<br>
+<div style="font-size:13px;margin-top:8px">친구 ID (한 줄에 하나. 친구가 보낸 문서는 바로 받고, 친구가 아는 다른 위키도 차례로 찾아갑니다):<br>
 <textarea id="friends" rows="2" style="width:100%;font-size:13px"></textarea>
 <button onclick="api('/api/p2p_friends?ids='+encodeURIComponent(document.getElementById('friends').value)).then(load)">친구 저장</button></div>
 <p style="font-size:12px;color:#a60"><b>사보타주 방지</b>: 믿음은 주소가 아니라 ID 의 <b>검증 실적</b>으로만 쌓입니다.
@@ -507,8 +519,10 @@ var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.
 document.getElementById('myid').textContent=p.id||'(설치 뒤에 만들어집니다)';
 if(document.activeElement.id!=='hubs')document.getElementById('hubs').value=p.hubs_list.join('\n');
 if(document.activeElement.id!=='friends')document.getElementById('friends').value=p.friends_list.join('\n');
-document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · 중계소 '+p.hubs_list.length+'곳 중 '+p.hubs_alive+'곳 연결 · 내가 보낸 문서 '+
-p.sent+'개 · 최근 24시간 받은 문서 '+p.received_today+'개'+(p.hubs_list.length?'':' · <b>중계소가 없습니다</b>')+
+document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · '+dot(s.running.p2pwin)+' P2P 창구 '+
+(p.window_url?'<code>'+p.window_url+'</code>':'(주소 만드는 중…)')+' · 공용 연결망(DHT) '+(p.dht_ok?'<span class=on>연결됨</span>':'<b>아직 안 됨</b>')+
+'<br>찾은 위키 '+p.peers_found+'곳 (응답 중 '+p.peers_alive+'곳)'+(p.hubs_list.length?' · 중계소 '+p.hubs_list.length+'곳 중 '+p.hubs_alive+'곳 연결':'')+
+' · 내가 나눈 문서 '+p.sent+'개 · 최근 24시간 받은 문서 '+p.received_today+'개'+
 '<br><span style="font-size:13px">아는 ID '+p.nodes+'개 (친구 '+p.friends+' · 검증된 ID '+p.proven+') · 검증 통과 '+p.audits_ok+'건 · 검증 대기 '+p.unaudited+
 '건 · 차단한 ID '+(p.banned?'<b style="color:#c00">'+p.banned+'개</b>':'0개')+'</span>'):'';
 document.getElementById('plog').textContent=p.on?p.log.join(''):'';
