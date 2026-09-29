@@ -9,3 +9,4 @@ __pycache__/
 *.pyc
 run/
 export/
+update.json

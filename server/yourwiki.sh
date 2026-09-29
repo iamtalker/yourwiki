@@ -10,6 +10,7 @@
 #            P2P_FRIENDS: 친구 ID(쉼표로 구분)
 #            P2P_URL: 내 P2P 창구(127.0.0.1:3002)로 오는 고정 주소가 있으면 적는다. 비우면 임시 공개 주소를 자동으로 만든다
 #            P2P_HUBS: 중계소 주소(선택, 쉼표로 구분)
+#            UPDATE_NOTICE(on|off, 기본 on): GitHub 에 새 판이 나왔는지 켤 때 알려 주기(알리기만 함)
 #            HUB(on|off, 기본 off): 이 서버를 중계소로도 연다(/_hub/, 고정 도메인 + HTTPS 뒤에서)
 # HTTPS 는 nginx·Caddy 같은 역방향 프록시를 3000번 앞에 두세요.
 set -euo pipefail
@@ -62,6 +63,7 @@ case "${1:-}" in
     esac
     echo "켰습니다: http://$LISTEN (엔진 준비에 몇 분 걸릴 수 있습니다) · 동기화: $SYNC · P2P: $P2P · 중계소: ${HUB:-off}"
     echo "※ CC BY-NC-SA 2.0 KR · 상업적 이용 금지 · 광고를 붙이거나 상업적으로 운영하면 라이선스 위반입니다."
+    [ "${UPDATE_NOTICE:-on}" = on ] && python3 scripts/update_check.py --quiet || true   # 새 판이 있을 때만 한 줄
     ;;
   stop)
     for n in p2p p2ptunnel p2pwin updater proxy engine; do
@@ -74,6 +76,7 @@ case "${1:-}" in
       if running "$n"; then echo "● $n 실행 중"; else echo "○ $n 꺼짐"; fi
     done
     tail -n 5 "$RUN/updater.log" 2>/dev/null || true
+    [ "${UPDATE_NOTICE:-on}" = on ] && python3 scripts/update_check.py || true
     ;;
   install-service)
     [ "$(id -u)" = 0 ] || { echo "sudo 로 실행하세요"; exit 1; }

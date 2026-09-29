@@ -412,6 +412,7 @@ def status():
     st["install_log"] = korean_log(tail("install.log", 40))[-12:]
     st["updater_log"] = tail("updater.log", 8)
     st["info"] = info()
+    st["update"] = dict(_cache.get("update") or {}, on=settings().get("update_notice", True))
     st["running"]["tunnel"] = alive("tunnel")
     st["running"]["p2p"] = alive("p2p")
     st["running"]["p2ptunnel"] = alive("p2ptunnel")
@@ -432,7 +433,8 @@ h1{font-size:22px}section{border:1px solid #ddd;border-radius:8px;padding:14px 1
 h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2px;cursor:pointer}
 .on{color:#0a0}.off{color:#999}pre{background:#f6f6f6;padding:8px;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto}
 .warn{font-size:12px;color:#a60}label{margin-right:12px}
-</style><h1>유어위키 관리판</h1>
+</style><div id="upd" hidden style="background:#fff4e0;border:1px solid #f0c060;border-radius:8px;padding:10px 14px;margin:12px 0"></div>
+<h1>유어위키 관리판</h1>
 <p class="warn">이 데이터는 CC BY-NC-SA 2.0 KR입니다. 상업적 이용은 금지됩니다. 이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다.</p>
 <section><h2>상태</h2><div id="st">불러오는 중…</div></section>
 <section><h2>위키</h2>
@@ -493,6 +495,12 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 전체 문서(약 180만 개)는 CPU 4개 PC 기준 약 1시간, 디스크는 3~10GB 가 필요합니다. 진행 중에는 남은 시간이 표시됩니다.<br>
 표·목록·각주·접기·틀 등 흔한 문법을 옮기고, 이미지와 #!html 은 옮기지 않습니다. 모든 문서의 출처·라이선스 고지는 그대로 남으니 지우지 마세요(CC BY-NC-SA 2.0 KR).</p>
 <pre id="elog"></pre></section>
+<section><h2>새 판 알림</h2>
+<label><input type="checkbox" id="updon" onchange="api('/api/update_notice?on='+(this.checked?1:0)).then(load)"> GitHub 에 새 판이 나오면 알려 주기</label>
+<button onclick="api('/api/update_check').then(load)">지금 확인</button>
+<div id="updst" style="font-size:13px;color:#555;margin-top:6px"></div>
+<p style="font-size:12px;color:#777">12시간에 한 번 GitHub(iamtalker/yourwiki)의 최신 릴리스만 확인합니다. 보내는 정보는 없고, 스스로 설치하지 않습니다.
+새 판은 릴리스 내용을 보고 직접 받아 이 폴더에 덮어쓰세요(<code>wiki</code>·<code>data</code> 폴더는 그대로 두면 됩니다).</p></section>
 <section><h2>설치 · 데이터</h2>
 <button onclick="install('2026')">설치 / 다시 설치</button>
 <p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="ilog"></pre></section>
@@ -507,6 +515,7 @@ async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 
 async function exp(t){if(confirm('내보낼까요? 문서가 많아 오래 걸리고 디스크 공간이 수 GB 필요합니다.')){alert(await api('/api/export?to='+t));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
+function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function dot(b){return b?'<span class=on>●</span>':'<span class=off>○</span>'}
 async function load(){const s=await (await fetch('/api/status')).json();listen=s.listen;
 var i=s.info;document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개':'아직 설치되지 않음')+
@@ -529,6 +538,12 @@ document.getElementById('plog').textContent=p.on?p.log.join(''):'';
 document.getElementById('sync').textContent='대기열 '+s.queue+'개'+(s.queue_eta?' (지금 속도면 약 '+s.queue_eta+' 뒤 비움)':'')+' · 최근 24시간 받은 문서 '+s.fetched_today+'개';
 document.getElementById('ulog').textContent=s.updater_log.join('');
 document.getElementById('ilog').textContent=s.install_log.join('');
+var u=s.update||{},ub=document.getElementById('upd');document.getElementById('updon').checked=u.on!==false;
+ub.hidden=!(u.on!==false&&u.newer);
+if(u.newer&&ub.dataset.v!==u.latest){ub.dataset.v=u.latest;ub.innerHTML='<b>새 판이 나왔습니다: '+esc(u.name||u.latest)+'</b> ('+esc(u.published||'')+') · 지금 '+esc(u.current)+
+' · <a href="'+esc(u.url)+'" target=_blank>릴리스 보기</a>'+(u.notes?'<details style="margin-top:6px"><summary>달라진 점</summary><pre>'+esc(u.notes)+'</pre></details>':'')}
+document.getElementById('updst').textContent=u.on===false?'알림 꺼짐':(u.latest?(u.newer?'새 판 '+u.latest+' 이 있습니다':'최신 판입니다 ('+u.current+', GitHub 최신 '+u.latest+')')+
+(u.checked_at?' · 확인 '+new Date(u.checked_at*1000).toLocaleString():''):(u.error?'확인하지 못했습니다: '+u.error:'확인 전'));
 document.getElementById('elog').textContent=s.export_log.join('');
 var pl=s.export_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')).pop();
 document.getElementById('eprog').textContent=s.running.export?('내보내는 중 · '+(pl||'준비 중…')):(pl&&pl.startsWith('완료')?pl:'');
@@ -586,6 +601,15 @@ class Handler(BaseHTTPRequestHandler):
             msg = set_p2p(hubs=(q.get("hubs") or [""])[0])
         elif u.path == "/api/p2p_friends":
             msg = set_p2p(friends=(q.get("ids") or [""])[0])
+        elif u.path == "/api/update_check":
+            import update_check
+            _cache["update"] = update_check.check(force=True)
+            msg = update_check.message(_cache["update"])
+        elif u.path == "/api/update_notice":
+            st = settings()
+            st["update_notice"] = (q.get("on") or ["1"])[0] == "1"
+            save_settings(st)
+            msg = "새 판 알림을 " + ("켰습니다" if st["update_notice"] else "껐습니다")
         elif u.path == "/api/export":
             msg = run_export((q.get("to") or [""])[0])
         elif u.path == "/api/sync":
@@ -613,8 +637,21 @@ def cleanup_leftovers():
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def update_loop():
+    """새 판 알림: 한 시간마다 들여다보되 GitHub 에는 12시간에 한 번만 묻는다(update_check.py). 알리기만 한다."""
+    import update_check
+    while True:
+        if settings().get("update_notice", True):
+            try:
+                _cache["update"] = update_check.check()
+            except Exception:
+                pass
+        time.sleep(3600)
+
+
 def main():
     cleanup_leftovers()
+    threading.Thread(target=update_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
     url = f"http://127.0.0.1:{PANEL_PORT}/"
     print(f"유어위키 관리판: {url}  (끌 때는 관리판에서 [끄기]를 누르세요)", flush=True)

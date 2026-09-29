@@ -12,6 +12,7 @@ if [ "$DOCS" -lt 1000 ]; then
   bash server/install.sh "$EDITION"
 fi
 
+[ "${UPDATE_NOTICE:-on}" = on ] && python3 scripts/update_check.py --quiet || true   # 새 판이 있을 때만 한 줄
 echo "※ 이 데이터는 CC BY-NC-SA 2.0 KR입니다. 상업적 이용은 금지됩니다."
 echo "  이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다."
 

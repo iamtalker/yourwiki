@@ -65,6 +65,10 @@
     }
   },
   "default_edition": "2026",
+  "update": {
+    "repo": "iamtalker/yourwiki",
+    "every_hours": 12
+  },
   "p2p": {
     "hubs": [],
     "seeds": []
