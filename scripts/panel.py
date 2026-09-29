@@ -429,25 +429,25 @@ def status():
 PAGE = r"""<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>유어위키 관리판</title><style>
 body{font-family:system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#222}
-h1{font-size:22px}section{border:1px solid #ddd;border-radius:8px;padding:14px 16px;margin:12px 0}
+h1{font-size:22px}details.sec{border:1px solid #ddd;border-radius:8px;padding:12px 16px;margin:10px 0}details.sec>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}details.sec>summary::-webkit-details-marker{display:none}details.sec>summary::before{content:'▸';color:#888;width:1em}details.sec[open]>summary::before{content:'▾'}details.sec>summary h2{margin:0}details.sec[open]>summary{margin-bottom:10px}.sum{font-size:13px;color:#666}.sum .on{color:#0a0}
 h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2px;cursor:pointer}
 .on{color:#0a0}.off{color:#999}pre{background:#f6f6f6;padding:8px;font-size:12px;white-space:pre-wrap;max-height:220px;overflow:auto}
 .warn{font-size:12px;color:#a60}label{margin-right:12px}
 </style><div id="upd" hidden style="background:#fff4e0;border:1px solid #f0c060;border-radius:8px;padding:10px 14px;margin:12px 0"></div>
 <h1>유어위키 관리판</h1>
 <p class="warn">이 데이터는 CC BY-NC-SA 2.0 KR입니다. 상업적 이용은 금지됩니다. 이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다.</p>
-<section><h2>상태</h2><div id="st">불러오는 중…</div></section>
-<section><h2>위키</h2>
+<details class="sec" id="sec-st" data-default="1" open><summary><h2>상태</h2><span class="sum" id="sum-st"></span></summary><div id="st">불러오는 중…</div></details>
+<details class="sec" id="sec-wiki" data-default="1" open><summary><h2>위키</h2><span class="sum" id="sum-wiki"></span></summary>
 <button onclick="act('start')">켜기</button><button onclick="act('stop')">끄기</button>
-<button onclick="openWiki()">위키 열기</button></section>
-<section><h2>나무위키 최신판 동기화</h2>
+<button onclick="openWiki()">위키 열기</button></details>
+<details class="sec" id="sec-sync" data-default="0"><summary><h2>나무위키 최신판 동기화</h2><span class="sum" id="sum-sync"></span></summary>
 <label><input type="radio" name="sync" value="off" onchange="setSync(this.value)"> 끄기</label>
 <label><input type="radio" name="sync" value="queue" onchange="setSync(this.value)"> 요청한 문서만</label>
 <label><input type="radio" name="sync" value="auto" onchange="setSync(this.value)"> 자동 따라잡기 (기본)</label>
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
-<div id="sync"></div><pre id="ulog"></pre></section>
-<section><h2>P2P 공유 — 다른 유어위키와 받은 문서 나누기</h2>
+<div id="sync"></div><pre id="ulog"></pre></details>
+<details class="sec" id="sec-p2p" data-default="0"><summary><h2>P2P 공유</h2><span class="sum" id="sum-p2p"></span></summary>
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
 <label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
 <div id="p2pline" style="margin:8px 0;font-weight:bold"></div>
@@ -472,8 +472,8 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <button onclick="api('/api/p2p_hubs?hubs='+encodeURIComponent(document.getElementById('hubs').value)).then(load)">중계소 저장</button></div>
 <p style="font-size:12px;color:#a60">믿음은 주소가 아니라 ID 의 검증 실적으로만 쌓입니다. 검증 5건을 통과한 ID 만 '검증된 ID' 가 되고, 새 ID 들에게서는
 모두 합쳐 한 시간에 200개까지만 받습니다. 내 문서와 절반 넘게 다른 내용은 나무위키에서 직접 확인합니다. 받은 문서는 역사에 어느 ID 에서 왔는지 남습니다.</p>
-<div id="p2pst"></div><pre id="plog"></pre></details></section>
-<section><h2>위키 색</h2>
+<div id="p2pst"></div><pre id="plog"></pre></details></details>
+<details class="sec" id="sec-color" data-default="0"><summary><h2>위키 색</h2><span class="sum" id="sum-color"></span></summary>
 <span id="swatch" style="display:inline-block;width:28px;height:28px;border-radius:6px;vertical-align:middle;border:1px solid #ccc"></span>
 <select id="preset" onchange="if(this.value)setColor(this.value)">
 <option value="">추천 색 고르기…</option>
@@ -482,14 +482,14 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <option value="#c2255c">라즈베리</option><option value="#c92a2a">레드</option><option value="#e8590c">오렌지</option>
 <option value="#343a40">차콜</option><option value="#212529">블랙</option></select>
 <input type="color" id="picker" onchange="setColor(this.value)" title="원하는 색 직접 고르기">
-<span style="font-size:13px;color:#555">위키 맨 위 머리글 색입니다. 고르면 새로고침만으로 바로 바뀝니다.</span></section>
-<section><h2>인터넷에 공개</h2>
+<span style="font-size:13px;color:#555">위키 맨 위 머리글 색입니다. 고르면 새로고침만으로 바로 바뀝니다.</span></details>
+<details class="sec" id="sec-pub" data-default="0"><summary><h2>인터넷에 공개</h2><span class="sum" id="sum-pub"></span></summary>
 <button onclick="pub(1)">공개하기</button><button onclick="act2('tunnel?on=0')">공개 끄기</button>
 <div id="pubinfo" style="margin:6px 0;font-weight:bold"></div>
 <p style="font-size:13px;color:#555">공유기 설정 없이 Cloudflare 임시 공개 주소(https)를 만듭니다. 켤 때마다 주소가 바뀝니다.<br>
 <b>공개 전에</b>: 위키에서 먼저 가입해 관리자가 되고, 관리자 설정 → 권한에서 비로그인(ip) 사용자의 편집을 막으세요.
-공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></section>
-<section><h2>다른 위키로 내보내기</h2>
+공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></details>
+<details class="sec" id="sec-export" data-default="0"><summary><h2>다른 위키로 내보내기</h2><span class="sum" id="sum-export"></span></summary>
 <button onclick="exp('mediawiki')">MediaWiki 로 내보내기</button><button onclick="exp('dokuwiki')">DokuWiki 로 내보내기</button>
 <button onclick="exp('markdown')">Markdown 으로 내보내기</button>
 <div id="eprog" style="margin:6px 0;font-weight:bold"></div>
@@ -499,16 +499,16 @@ DokuWiki: <code>yourwiki-dokuwiki.zip</code> → DokuWiki 폴더에 풀고 <code
 Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나. Obsidian 같은 편집기에서 폴더째 엽니다.<br>
 전체 문서(약 180만 개)는 CPU 4개 PC 기준 약 1시간, 디스크는 3~10GB 가 필요합니다. 진행 중에는 남은 시간이 표시됩니다.<br>
 표·목록·각주·접기·틀 등 흔한 문법을 옮기고, 이미지와 #!html 은 옮기지 않습니다. 모든 문서의 출처·라이선스 고지는 그대로 남으니 지우지 마세요(CC BY-NC-SA 2.0 KR).</p>
-<pre id="elog"></pre></section>
-<section><h2>새 판 알림</h2>
+<pre id="elog"></pre></details>
+<details class="sec" id="sec-update" data-default="0"><summary><h2>새 판 알림</h2><span class="sum" id="sum-update"></span></summary>
 <label><input type="checkbox" id="updon" onchange="api('/api/update_notice?on='+(this.checked?1:0)).then(load)"> GitHub 에 새 판이 나오면 알려 주기</label>
 <button onclick="api('/api/update_check').then(load)">지금 확인</button>
 <div id="updst" style="font-size:13px;color:#555;margin-top:6px"></div>
 <p style="font-size:12px;color:#777">12시간에 한 번 GitHub(iamtalker/yourwiki)의 최신 릴리스만 확인합니다. 보내는 정보는 없고, 스스로 설치하지 않습니다.
-새 판은 릴리스 내용을 보고 직접 받아 이 폴더에 덮어쓰세요(<code>wiki</code>·<code>data</code> 폴더는 그대로 두면 됩니다).</p></section>
-<section><h2>설치 · 데이터</h2>
+새 판은 릴리스 내용을 보고 직접 받아 이 폴더에 덮어쓰세요(<code>wiki</code>·<code>data</code> 폴더는 그대로 두면 됩니다).</p></details>
+<details class="sec" id="sec-install" data-default="0"><summary><h2>설치 · 데이터</h2><span class="sum" id="sum-install"></span></summary>
 <button onclick="install('2026')">설치 / 다시 설치</button>
-<p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="ilog"></pre></section>
+<p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="ilog"></pre></details>
 <script>
 let listen="127.0.0.1:3000";
 async function api(p){const r=await fetch(p,{method:'POST'});return (await r.json()).msg}
@@ -531,6 +531,14 @@ dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);
 var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.value==(p.on?'1':'0'));
 document.getElementById('myid').textContent=p.id||'(설치 뒤에 만들어집니다)';
+sum('sync',{off:'끔',queue:'요청한 문서만',auto:'자동 따라잡기'}[s.sync]+' · 대기열 '+s.queue+'개'+(s.queue_eta?' (약 '+s.queue_eta+')':''));
+sum('p2p',!p.on?'꺼짐':(p.dht_ok?'<span class=on>켜짐</span> · 연결된 위키 '+p.peers_alive+'곳 · 24시간 받은 문서 '+p.received_today+'개':'켜짐 · 다른 위키 찾는 중'));
+sum('color','<span style="display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:middle;background:'+esc(s.color)+'"></span> '+esc(s.color));
+sum('pub',s.public_url?'<span class=on>공개 중</span> '+esc(s.public_url):(s.running.tunnel?'주소 만드는 중…':'꺼짐'));
+var el=s.export_log.filter(function(l){return l.indexOf('진행')===0||l.indexOf('완료')===0}).pop();
+sum('export',s.running.export?'내보내는 중 · '+esc(el||''):(el&&el.indexOf('완료')===0?'마지막: '+esc(el.split('→')[0]):''));
+var uu=s.update||{};sum('update',uu.on===false?'꺼짐':(uu.newer?'<b>새 판 '+esc(uu.latest)+'</b>':(uu.latest?'최신 판':'')));
+sum('install',(s.installed?'설치됨':'설치 전')+(s.running.install?' · <b>설치 중</b>':''));
 document.getElementById('p2pline').innerHTML=!p.on?'':(!s.running.engine?'위키를 켜면 P2P 도 함께 켜집니다':
 (p.dht_ok?'<span class=on>●</span> 참여 중 · 연결된 위키 '+p.peers_alive+'곳 · 최근 24시간 받은 문서 '+p.received_today+'개 · 내가 나눈 문서 '+p.sent+'개':
 '<span class=off>●</span> 다른 유어위키를 찾는 중… (몇 분 걸릴 수 있습니다)'));
@@ -558,6 +566,11 @@ document.getElementById('eprog').textContent=s.running.export?('내보내는 중
 document.getElementById('expdir').textContent=s.export_dir;
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
+document.querySelectorAll('details.sec').forEach(function(d){
+  try{var v=localStorage.getItem('kit-'+d.id);if(v!==null)d.open=v==='1'}catch(e){}
+  d.addEventListener('toggle',function(){try{localStorage.setItem('kit-'+d.id,d.open?'1':'0')}catch(e){}})});
+function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return '&#'+c.charCodeAt(0)+';'})}
+function sum(k,h){var e=document.getElementById('sum-'+k);if(e&&e.innerHTML!==h)e.innerHTML=h}
 load();setInterval(load,3000);
 </script></html>"""
 
