@@ -26,9 +26,15 @@ if [ "${P2P:-off}" = on ]; then
   IFS=',' read -ra PS <<< "${P2P_FRIENDS:-}"
   for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--friend "$p"); done
   echo "== 내 P2P ID: $(python3 scripts/p2p.py wiki --id)"
-  python3 scripts/hub_server.py --read-only --listen 127.0.0.1:3002 --db wiki/hub.db &   # 내 P2P 창구(읽기 전용)
+  WIN_LISTEN=127.0.0.1:3002
+  case "${P2P_OPEN:-tunnel}" in   # direct·both 는 network_mode: host 에서만 의미가 있다(공유기 UPnP·공인 IP)
+    direct|both) WIN_LISTEN="[::]:3002"; X+=(--direct) ;;
+  esac
+  python3 scripts/hub_server.py --read-only --listen "$WIN_LISTEN" --db wiki/hub.db &   # 내 P2P 창구(읽기 전용)
   if [ -n "${P2P_URL:-}" ]; then
     X+=(--self-url "$P2P_URL")
+  elif [ "${P2P_OPEN:-tunnel}" = direct ]; then
+    :
   elif CF=$(python3 scripts/cloudflared.py); then
     "$CF" tunnel --no-autoupdate --url http://127.0.0.1:3002 > /tmp/p2p-tunnel.log 2>&1 &
     X+=(--tunnel-log /tmp/p2p-tunnel.log)

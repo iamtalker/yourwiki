@@ -116,11 +116,19 @@ def start_p2p():
     s = settings()
     if not s.get("p2p") or not os.path.exists(os.path.join(WIKI, "data.db")):
         return
+    mode = s.get("p2p_open", "tunnel")  # tunnel: Cloudflare 임시 주소 · direct: 공유기 포트·IPv6 · both: 둘 다
+    direct = mode in ("direct", "both")
+    # 직접 연결이면 창구를 바깥에서도 받게 연다(읽기 전용: 서명된 문서 묶음만 나감)
+    listen = ("[::]:" if direct else "127.0.0.1:") + str(P2P_PORT)
     spawn("p2pwin", [sys.executable, os.path.join(SCRIPTS, "hub_server.py"), "--read-only",
-                     "--listen", "127.0.0.1:" + str(P2P_PORT), "--db", os.path.join(WIKI, "hub.db")], "p2p-window.log")
-    args = [sys.executable, os.path.join(SCRIPTS, "p2p.py"), WIKI, "--watch"]
+                     "--listen", listen, "--db", os.path.join(WIKI, "hub.db")], "p2p-window.log")
+    args = [sys.executable, os.path.join(SCRIPTS, "p2p.py"), WIKI, "--watch", "--window-port", str(P2P_PORT)]
+    if direct:
+        args.append("--direct")
     if s.get("p2p_url"):  # 고정 주소(내 도메인 등)가 있으면 임시 주소를 만들지 않는다
         args += ["--self-url", s["p2p_url"]]
+    elif mode == "direct":
+        pass
     else:
         try:
             import cloudflared
@@ -217,11 +225,13 @@ def tunnel(on):
     return "공개를 시작했습니다. 잠시 뒤 공개 주소가 표시됩니다"
 
 
-def set_p2p(on=None, hubs=None, friends=None):
+def set_p2p(on=None, hubs=None, friends=None, open_mode=None):
     import p2p
     s = settings()
     if on is not None:
         s["p2p"] = on
+    if open_mode in ("tunnel", "direct", "both"):
+        s["p2p_open"] = open_mode
     if hubs is not None:
         s["p2p_hubs"] = [u for u in (p2p.norm_url(x) for x in re.split(r"[\s,]+", hubs)) if u]
     if friends is not None:
@@ -455,7 +465,7 @@ def status():
     st["export_log"] = tail("export.log", 6)
     st["export_dir"] = EXPORT_DIR
     st["public_url"] = tunnel_url()
-    st["p2p"] = dict(p2p_status(), on=bool(s.get("p2p")), hubs_list=p2p_hubs(),
+    st["p2p"] = dict(p2p_status(), on=bool(s.get("p2p")), open=s.get("p2p_open", "tunnel"), hubs_list=p2p_hubs(),
                      friends_list=s.get("p2p_friends", []), log=tail("p2p.log", 8))
     return st
 
@@ -490,7 +500,7 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 나무위키로 가는 요청은 늘지 않습니다(6초에 1건 그대로).</li>
 <li><b>켜 두기만 하면 됩니다</b>: 다른 유어위키를 알아서 찾아 주고받습니다. 운영하는 서버는 없습니다(BitTorrent 공용 연결망을 씁니다).</li>
 <li><b>켜면 생기는 일</b>: 내 컴퓨터가 받은 문서를 다른 유어위키에게도 나눠 주므로 인터넷 사용량이 늘고, 참여하고 있다는 사실이 공용 연결망에 보입니다.
-위키 화면과 내 IP 주소는 공개되지 않습니다(나가는 것은 서명된 나무위키 문서뿐, Cloudflare 임시 주소를 거침).</li>
+위키 화면과 내 IP 주소는 공개되지 않습니다(나가는 것은 서명된 나무위키 문서뿐, Cloudflare 임시 주소를 거침). 고급 설정에서 '직접 연결'을 고르면 Cloudflare 없이 열리는 대신 내 IP 가 보입니다.</li>
 <li><b>엉터리 내용 막기</b>: 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고, 거짓이면 그 위키를 차단하고 받은 문서를 모두 되돌립니다.
 그래서 처음 몇 시간은 조금씩만 받고, 검증이 쌓이면 빨라집니다.</li>
 <li>회사·학교처럼 공용 연결망(UDP)을 막는 곳에서는 P2P 가 되지 않습니다(위키는 그대로 동작합니다).</li>
@@ -498,6 +508,12 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <details style="font-size:13px"><summary>고급 설정</summary>
 <div style="margin-top:8px">내 ID: <code id="myid" style="word-break:break-all"></code>
 <button onclick="navigator.clipboard.writeText(document.getElementById('myid').textContent).catch(function(){})">복사</button></div>
+<div style="margin-top:8px">창구 여는 방법 (다른 위키가 내 컴퓨터에서 문서를 가져가는 길):<br>
+<label><input type="radio" name="popen" value="tunnel" onchange="api('/api/p2p_open?mode='+this.value).then(load)"> Cloudflare 임시 주소 (기본 · 내 IP 가 보이지 않음 · Cloudflare 무료 서비스에 기댐)</label><br>
+<label><input type="radio" name="popen" value="direct" onchange="api('/api/p2p_open?mode='+this.value).then(load)"> 직접 연결 (Cloudflare 없이 · 공유기 포트 자동 열기(UPnP)나 IPv6 · <b>내 공인 IP 가 다른 참여자에게 보임</b>)</label><br>
+<label><input type="radio" name="popen" value="both" onchange="api('/api/p2p_open?mode='+this.value).then(load)"> 둘 다 (직접 연결이 안 되는 위키는 Cloudflare 주소로 · 가장 튼튼함 · 내 IP 보임)</label>
+<div style="color:#666">직접 연결은 공유기가 UPnP 를 켜 두었거나 공인 IPv6 가 있어야 됩니다. 통신사 공유 IP(CGNAT)에서는 안 됩니다.
+Windows 가 '방화벽 허용' 창을 띄우면 허용을 눌러 주세요. 어느 쪽도 안 되면 받기는 그대로 되고 나눠 주기만 안 됩니다.</div></div>
 <div style="margin-top:8px">친구 ID (선택. 적으면 그 위키가 준 문서는 검증 기간 없이 바로 믿고 받습니다. 한 줄에 하나):<br>
 <textarea id="friends" rows="2" style="width:100%;font-size:13px"></textarea>
 <button onclick="api('/api/p2p_friends?ids='+encodeURIComponent(document.getElementById('friends').value)).then(load)">친구 저장</button></div>
@@ -564,6 +580,7 @@ dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중
 (s.running.engine?(s.ready?'<br><b class=on>위키 준비됨 — [위키 열기]를 누르세요</b>':'<br><b>위키 엔진 시작 중… (문서가 많아 몇 분 걸릴 수 있습니다)</b>'):'');
 document.querySelectorAll('input[name=sync]').forEach(x=>x.checked=x.value==s.sync);
 var p=s.p2p;document.querySelectorAll('input[name=p2p]').forEach(x=>x.checked=x.value==(p.on?'1':'0'));
+document.querySelectorAll('input[name=popen]').forEach(x=>x.checked=x.value==p.open);
 document.getElementById('myid').textContent=p.id||'(설치 뒤에 만들어집니다)';
 sum('sync',{off:'끔',queue:'요청한 문서만',auto:'자동 따라잡기'}[s.sync]+' · 대기열 '+s.queue+'개'+(s.queue_eta?' (약 '+s.queue_eta+')':''));
 sum('p2p',!p.on?'꺼짐':(p.dht_ok?'<span class=on>켜짐</span> · 연결된 위키 '+p.peers_alive+'곳 · 24시간 받은 문서 '+p.received_today+'개':'켜짐 · 다른 위키 찾는 중'));
@@ -579,7 +596,7 @@ document.getElementById('p2pline').innerHTML=!p.on?'':(!s.running.engine?'위키
 if(document.activeElement.id!=='hubs')document.getElementById('hubs').value=p.hubs_list.join('\n');
 if(document.activeElement.id!=='friends')document.getElementById('friends').value=p.friends_list.join('\n');
 document.getElementById('p2pst').innerHTML=p.on?(dot(s.running.p2p)+' P2P 작업자 · '+dot(s.running.p2pwin)+' P2P 창구 '+
-(p.window_url?'<code>'+p.window_url+'</code>':'(주소 만드는 중…)')+' · 공용 연결망(DHT) '+(p.dht_ok?'<span class=on>연결됨</span>':'<b>아직 안 됨</b>')+
+(p.window_url?'<code>'+esc(p.window_url).split(' ').join('</code> · <code>')+'</code>':'(주소 만드는 중…)')+' · 공용 연결망(DHT) '+(p.dht_ok?'<span class=on>연결됨</span>':'<b>아직 안 됨</b>')+
 '<br>찾은 위키 '+p.peers_found+'곳 (응답 중 '+p.peers_alive+'곳)'+(p.hubs_list.length?' · 중계소 '+p.hubs_list.length+'곳 중 '+p.hubs_alive+'곳 연결':'')+
 ' · 내가 나눈 문서 '+p.sent+'개 · 최근 24시간 받은 문서 '+p.received_today+'개'+
 '<br><span style="font-size:13px">아는 ID '+p.nodes+'개 (친구 '+p.friends+' · 검증된 ID '+p.proven+') · 검증 통과 '+p.audits_ok+'건 · 검증 대기 '+p.unaudited+
@@ -659,6 +676,8 @@ class Handler(BaseHTTPRequestHandler):
             msg = set_p2p(on=(q.get("on") or ["0"])[0] == "1")
         elif u.path == "/api/p2p_hubs":
             msg = set_p2p(hubs=(q.get("hubs") or [""])[0])
+        elif u.path == "/api/p2p_open":
+            msg = set_p2p(open_mode=(q.get("mode") or [""])[0])
         elif u.path == "/api/p2p_friends":
             msg = set_p2p(friends=(q.get("ids") or [""])[0])
         elif u.path == "/api/update_check":

@@ -166,7 +166,7 @@ def init(q):
                        ("shared", "audited int default 0"), ("shared", "tier text default ''"),
                        ("hindex", "seen real default 0"), ("hindex", "tries int default 0"),
                        ("nodes", "strikes int default 0"), ("peers", "misses int default 0"),
-                       ("nodes", "via text default ''")):
+                       ("nodes", "via text default ''"), ("peers", "alt text default ''")):
         try:
             q.execute(f"alter table {table} add column {col}")
         except sqlite3.OperationalError:
@@ -238,13 +238,22 @@ def norm_url(url):
 
 
 def public_url_ok(url, resolve=True):
-    """모르는 ID 가 알려 준 주소는 https 이고 사설·내부 주소가 아니어야 한다(내 공유기·내부망을 찌르지 않게)."""
+    """모르는 ID 가 알려 준 주소는 사설·내부 주소가 아니어야 한다(내 공유기·내부망을 찌르지 않게).
+    https 이거나, 직접 연결(direct.py)처럼 http://공인IP:1024 이상 포트 여야 한다.
+    (내용은 서명·해시로 확인하므로 http 로 받아도 바꿔치기는 안 된다)"""
     import ipaddress
     import socket
     if os.environ.get("YOURWIKI_P2P_ALLOW_LOCAL"):  # 시험용(한 컴퓨터에서 여러 위키)
         return True
     u = urllib.parse.urlsplit(url)
-    if u.scheme != "https" or not u.hostname or u.hostname == "localhost":
+    if not u.hostname or u.hostname == "localhost":
+        return False
+    if u.scheme == "http":
+        try:
+            return ipaddress.ip_address(u.hostname).is_global and (u.port or 80) >= 1024
+        except ValueError:
+            return False
+    if u.scheme != "https":
         return False
     hosts = [u.hostname]
     if resolve:
@@ -272,13 +281,17 @@ def set_meta(q, k, v):
 
 class Worker:
     def __init__(self, wiki_dir, hubs=(), friends=(), self_url="", tunnel_log="", use_dht=True, seeds=(),
-                 bootstrap=None):
+                 bootstrap=None, direct=False, window_port=3002):
         self.wiki_dir = wiki_dir
         self.q = init(sqlite3.connect(os.path.join(wiki_dir, "updater.db"), timeout=30))
         self.secret, self.me = load_key(wiki_dir)
         self.synced, self.clock, self.gave_up = {}, 0.0, 0
         self.hubdb = os.path.join(wiki_dir, "hub.db")
         self.self_url, self.tunnel_log = norm_url(self_url), tunnel_log
+        self.direct = None
+        if direct:  # Cloudflare 없이 공유기 포트 자동 열기(UPnP)·IPv6 로 창구를 직접 연다
+            import direct as directmod
+            self.direct = directmod.Direct(window_port, self.me, log)
         self.use_dht, self.bootstrap, self._dht = use_dht, bootstrap, None
         for sd in seeds:
             sd = sd.strip().lower()
@@ -334,6 +347,13 @@ class Worker:
                 pass
         return self.self_url
 
+    def my_urls(self):
+        """내 창구 주소들(최대 2개): 직접 연결 주소가 있으면 먼저(Cloudflare 를 덜 쓰게), 그다음 터널·고정 주소."""
+        out = list(self.direct.refresh()) if self.direct else []
+        if self.my_url():
+            out.append(self.self_url)
+        return list(dict.fromkeys(out))[:2]
+
     # -- DHT: 내 주소를 올리고, 친구·아는 ID 의 주소를 찾는다
     def dht(self):
         if self._dht is None:
@@ -342,16 +362,22 @@ class Worker:
         return self._dht
 
     def dht_publish(self):
-        url = self.my_url()
-        if not url or not self.use_dht:
+        urls = self.my_urls()
+        if not urls or not self.use_dht:
             return False
+        url = " ".join(urls)
         if url == get_meta(self.q, "dht_url") and time.time() - float(get_meta(self.q, "dht_at", "0") or 0) < DHT_EVERY:
             return False
         import dht
         known = [r[0] for r in self.q.execute(
             "select p.node from peers p join nodes n on n.id = p.node where n.banned = 0 and p.last_ok > ? "
             "order by n.trusted desc, n.audits_ok desc, random() limit ?", (time.time() - 86400, PEX_SHARE))]
-        value = {"u": url, "p": dht.pack_ids(known), "t": int(time.time())}
+        value = {"u": urls[0], "p": dht.pack_ids(known), "t": int(time.time())}
+        if len(urls) > 1:
+            value["a"] = urls[1]  # 두 번째 주소: 첫 주소에 닿지 않는 위키는 이쪽으로
+        while len(dht.bencode(value)) > 1000 and known:
+            known = known[:-1]
+            value["p"] = dht.pack_ids(known)
         ok, seq = self.dht().put(self.secret, bytes.fromhex(self.me), value, int(time.time()))
         if ok:
             set_meta(self.q, "dht_url", url)
@@ -397,11 +423,15 @@ class Worker:
                 continue
             self.q.execute("update peers set misses = 0 where node = ?", (node,))
             v = r[1]
-            url = norm_url((v.get(b"u") or b"").decode("utf-8", "replace"))
             trusted = self.q.execute("select trusted from nodes where id = ?", (node,)).fetchone()[0]
-            if url and (trusted or public_url_ok(url)):
-                old = self.q.execute("select url from peers where node = ?", (node,)).fetchone()[0]
-                self.q.execute("update peers set url = ?, fails = 0 where node = ?", (url, node))
+            urls = [u for u in (norm_url((v.get(k) or b"").decode("utf-8", "replace")) for k in (b"u", b"a")
+                                if isinstance(v.get(k, b""), bytes)) if u and (trusted or public_url_ok(u))]
+            if urls:
+                url, alt = urls[0], (urls[1] if len(urls) > 1 else "")
+                old, old_alt = self.q.execute("select url, alt from peers where node = ?", (node,)).fetchone()
+                if old and {old, old_alt or ""} == {url, alt}:
+                    url, alt = old, old_alt or ""  # 전에 닿았던 쪽을 계속 먼저
+                self.q.execute("update peers set url = ?, alt = ?, fails = 0 where node = ?", (url, alt, node))
                 found += 1
                 if old != url:
                     log(f"ID {node[:12]}… 의 주소를 찾았습니다: {url}")
@@ -621,14 +651,21 @@ class Worker:
             self.dht_resolve()
         except OSError as e:
             log(f"DHT 오류: {e}")
-        for node, url in self.q.execute(
-                "select p.node, p.url from peers p join nodes n on n.id = p.node where n.banned = 0 "
+        mine = set(self.my_urls())
+        for node, url, alt in self.q.execute(
+                "select p.node, p.url, p.alt from peers p join nodes n on n.id = p.node where n.banned = 0 "
                 "and p.url is not null and p.url != '' and p.node != ?", (self.me,)).fetchall():
-            if url == self.my_url() or now - self.synced.get(node, 0) < SYNC_EVERY:
+            if url in mine or now - self.synced.get(node, 0) < SYNC_EVERY:
                 continue
             self.synced[node] = now
             try:
-                got = self.pull(url, peer=node)
+                try:
+                    got = self.pull(url, peer=node)
+                except (OSError, urllib.error.URLError):
+                    if not alt:
+                        raise
+                    got = self.pull(alt, peer=node)  # 첫 주소(예: 공유기 방화벽에 막힌 IPv6)가 안 되면 두 번째로
+                    self.q.execute("update peers set url = ?, alt = ? where node = ?", (alt, url, node))
                 self.q.execute("update peers set last_ok = ?, fails = 0 where node = ?", (time.time(), node))
                 if got:
                     log(f"ID {node[:12]}… 의 창구에서 새 목록 {got}개")
@@ -858,6 +895,9 @@ def main():
     ap.add_argument("--self-url", default="", help="다른 위키가 내 창구를 찾아올 주소(고정 주소가 있을 때)")
     ap.add_argument("--tunnel-log", default="", help="P2P 전용 터널(cloudflared) 기록 파일에서 내 주소를 읽는다")
     ap.add_argument("--no-dht", action="store_true", help="공용 연결망(DHT)을 쓰지 않는다(중계소만)")
+    ap.add_argument("--direct", action="store_true",
+                    help="Cloudflare 없이 공유기 포트 자동 열기(UPnP)·IPv6 로 창구를 직접 연다(내 공인 IP 가 보임)")
+    ap.add_argument("--window-port", type=int, default=3002, help="내 창구(hub_server --read-only) 포트")
     ap.add_argument("--dht-bootstrap", action="append", default=[], help="시험용 DHT 시작 노드 host:port")
     args = ap.parse_args()
     if args.id:
@@ -865,14 +905,25 @@ def main():
         return
     boot = [(h.rsplit(":", 1)[0], int(h.rsplit(":", 1)[1])) for h in args.dht_bootstrap] or None
     w = Worker(args.wiki_dir, args.hub or default_hubs(), args.friend, args.self_url, args.tunnel_log,
-               not args.no_dht, default_seeds(), boot)
+               not args.no_dht, default_seeds(), boot, args.direct, args.window_port)
     if not args.watch:
         print(w.round(), "개 받음")
         return
+    import signal
+
+    def on_term(*_):
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, on_term)  # 끌 때 공유기에서 빌린 포트를 돌려준다(못 돌려줘도 1시간 뒤 풀림)
+    except (ValueError, OSError):
+        pass
     try:
         w.watch()
     except KeyboardInterrupt:
         log("사용자가 멈춤")
+    finally:
+        if w.direct:
+            w.direct.close()
 
 
 if __name__ == "__main__":

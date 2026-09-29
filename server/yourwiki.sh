@@ -9,6 +9,8 @@
 #            P2P(on|off, 기본 off): 다른 유어위키와 받은 문서 나누기(서버 없이, 공용 연결망 DHT 로 서로 찾음)
 #            P2P_FRIENDS: 친구 ID(쉼표로 구분)
 #            P2P_URL: 내 P2P 창구(127.0.0.1:3002)로 오는 고정 주소가 있으면 적는다. 비우면 임시 공개 주소를 자동으로 만든다
+#            P2P_OPEN(tunnel|direct|both, 기본 tunnel): 내 창구를 여는 방법. tunnel=Cloudflare 임시 주소(IP 숨김),
+#                     direct=Cloudflare 없이 공유기 포트 자동 열기(UPnP)·IPv6·공인 IP(내 IP 보임), both=둘 다
 #            P2P_HUBS: 중계소 주소(선택, 쉼표로 구분)
 #            UPDATE_NOTICE(on|off, 기본 on): GitHub 에 새 판이 나왔는지 켤 때 알려 주기(알리기만 함)
 #            HUB(on|off, 기본 off): 이 서버를 중계소로도 연다(/_hub/, 고정 도메인 + HTTPS 뒤에서)
@@ -19,7 +21,7 @@ set -euo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$KIT"
 CONF="$KIT/yourwiki.conf"
-VARS=(LISTEN SYNC P2P P2P_FRIENDS P2P_URL P2P_HUBS UPDATE_NOTICE HUB)
+VARS=(LISTEN SYNC P2P P2P_OPEN P2P_FRIENDS P2P_URL P2P_HUBS UPDATE_NOTICE HUB)
 # 기억해 둔 설정 읽기(이번에 직접 준 값이 우선). source 하지 않고 KEY=값 줄만 읽는다
 if [ -f "$CONF" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
@@ -61,9 +63,16 @@ case "${1:-}" in
       IFS=',' read -ra PS <<< "${P2P_FRIENDS:-}"
       for p in "${PS[@]}"; do [ -n "$p" ] && X+=(--friend "$p"); done
       # 내 P2P 창구(읽기 전용): 서명된 문서 묶음만 나가고 위키 화면은 나가지 않는다
-      launch p2pwin p2p-window.log python3 scripts/hub_server.py --read-only --listen 127.0.0.1:3002 --db wiki/hub.db
+      P2P_OPEN="${P2P_OPEN:-tunnel}"
+      WIN_LISTEN=127.0.0.1:3002
+      if [ "$P2P_OPEN" = direct ] || [ "$P2P_OPEN" = both ]; then
+        WIN_LISTEN="[::]:3002"; X+=(--direct)   # 바깥에서도 받는다(방화벽에서 3002/tcp 를 열어 두면 공인 IP 서버는 바로 됨)
+      fi
+      launch p2pwin p2p-window.log python3 scripts/hub_server.py --read-only --listen "$WIN_LISTEN" --db wiki/hub.db
       if [ -n "${P2P_URL:-}" ]; then
         X+=(--self-url "$P2P_URL")
+      elif [ "$P2P_OPEN" = direct ]; then
+        :
       elif CF=$(python3 scripts/cloudflared.py); then
         : > "$RUN/p2p-tunnel.log"
         launch p2ptunnel p2p-tunnel.log "$CF" tunnel --no-autoupdate --url http://127.0.0.1:3002

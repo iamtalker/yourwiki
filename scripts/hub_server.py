@@ -12,6 +12,7 @@ import argparse
 import http.server
 import json
 import os
+import socket
 import socketserver
 import sys
 import time
@@ -27,6 +28,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     db_path = "hub.db"
     read_only = False
+
+    timeout = 60  # 바깥에 직접 열었을 때 느리게 붙잡고 있는 연결이 쌓이지 않게
 
     def log_message(self, fmt, *args):
         pass
@@ -72,6 +75,18 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 
+class Server6(Server):
+    """[::]:포트 — IPv6 와 IPv4 를 한 번에 받는다(P2P 직접 연결용)."""
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except (OSError, AttributeError):
+            pass
+        super().server_bind()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--listen", default="0.0.0.0:8080")
@@ -80,11 +95,20 @@ def main():
     ap.add_argument("--db", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hub.db"))
     args = ap.parse_args()
     host, port = args.listen.rsplit(":", 1)
+    host = host.strip("[]")
     Handler.db_path = args.db
     Handler.read_only = args.read_only
     hub.open_db(args.db).close()
+    if host == "::":
+        try:
+            srv = Server6((host, int(port)), Handler)
+        except OSError:  # IPv6 를 못 쓰는 컴퓨터
+            host = "0.0.0.0"
+            srv = Server((host, int(port)), Handler)
+    else:
+        srv = Server((host, int(port)), Handler)
     print(f"유어위키 중계소: http://{host}:{port}  (저장소 {args.db})", flush=True)
-    Server((host, int(port)), Handler).serve_forever()
+    srv.serve_forever()
 
 
 if __name__ == "__main__":
