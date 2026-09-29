@@ -175,6 +175,20 @@ CPU 여러 개로 나눠 변환하고, 진행 중에는 남은 시간을 보여 
 - 옮기지 않는 것: 이미지, `#!html`. 틀 문법은 엔진마다 달라 일부는 손으로 고쳐야 할 수 있습니다.
 - 모든 문서 끝의 출처·라이선스 고지는 그대로 옮겨집니다. 내보낸 데이터도 **CC BY-NC-SA 2.0 KR** 이니 지우지 마세요.
 
+## 유어위키(openNAMU) 형식 내보내기·가져오기
+
+관리판의 **내보내기 → 유어위키(openNAMU) 형식**은 openNAMU 의 `data.db` 와 같은 SQLite 파일을 만듭니다(`export/yourwiki-opennamu-….db`).
+문서 표(data·history·data_set·back)만 담고, 사용자 계정·접속 기록·토론은 넣지 않습니다. 변환이 없어 빠릅니다.
+
+- **범위**(모든 내보내기와 가져오기에 공통): **전체 문서** 또는 **설치한 판(예: 2026-08) 이후 바뀐 문서만**
+  (갱신기·P2P·직접 편집으로 생긴 판. 덤프에서 온 판은 빠짐). '이후 바뀐 문서만'은 파일이 작아 다른 사람에게 나눠 주기 좋습니다.
+- '전체'로 내보낸 파일은 새 openNAMU 의 `data.db` 로 그대로 써도 됩니다(없는 표는 openNAMU 가 켤 때 만듭니다).
+- **가져오기**: 받은 파일(유어위키가 내보낸 것이나 다른 openNAMU 의 `data.db`)을 유어위키 폴더의 `import/` 에 넣고, 위키를 끈 뒤
+  관리판의 **가져오기**에서 고릅니다. 문서마다 내 쪽보다 새 판만 역사 뒤에 이어 붙이고, 내 쪽이 같거나 더 새로우면 건너뜁니다(지우기는 옮기지 않음).
+  가져온 판의 역사 요약에는 `[가져옴 파일이름]` 이 붙습니다. 파일 내용은 P2P 처럼 검증되지 않으니 믿을 수 있는 곳에서 받은 것만 넣으세요.
+- 명령줄: `python scripts/wiki_pack.py export wiki --range changed`, `python scripts/wiki_pack.py import wiki 파일.db --range all`
+  (MediaWiki·DokuWiki·Markdown 은 `convert_wiki.py … --range changed`).
+
 ## 새 판 알림
 
 관리판은 12시간에 한 번 GitHub(`iamtalker/yourwiki`)의 **최신 릴리스**를 확인해, 새 판이 나오면 맨 위에 알려 줍니다(릴리스 링크와 달라진 점).

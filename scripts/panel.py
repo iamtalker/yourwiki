@@ -165,6 +165,8 @@ def start_wiki(open_browser=True):
     with lock:
         if not os.path.exists(os.path.join(WIKI, "data.db")):
             return "아직 설치되지 않았습니다"
+        if alive("import"):
+            return "가져오는 중입니다. 끝난 뒤에 켜세요"
         if not alive("engine"):
             spawn("engine", [ENGINE, "3001", "--localhost"], "server.log", cwd=WIKI)
         if not alive("proxy"):
@@ -282,9 +284,38 @@ def p2p_status():
 EXPORT_DIR = os.path.join(ROOT, "export")
 
 
-def run_export(target):
-    if target not in ("mediawiki", "dokuwiki", "markdown"):
+IMPORT_DIR = os.path.join(ROOT, "import")
+
+
+def import_files():
+    """import 폴더에 둔 openNAMU 형식 파일(.db .sqlite .sqlite3)."""
+    try:
+        return sorted(f for f in os.listdir(IMPORT_DIR) if f.lower().endswith((".db", ".sqlite", ".sqlite3")))
+    except OSError:
+        return []
+
+
+def run_import(name, rng):
+    if alive("import"):
+        return "이미 가져오는 중입니다"
+    if not os.path.exists(os.path.join(WIKI, "data.db")):
+        return "아직 설치되지 않았습니다"
+    if name not in import_files():
+        return "import 폴더에서 파일을 고르세요"
+    if alive("engine") or alive("export") or alive("install"):
+        return "먼저 위키를 끄세요(가져오기는 위키 DB 를 바꾸므로 위키가 꺼져 있을 때만 합니다)"
+    remember(import_range=rng)
+    open(os.path.join(ROOT, "import.log"), "w").close()
+    spawn("import", [sys.executable, os.path.join(SCRIPTS, "wiki_pack.py"), "import", WIKI,
+                     os.path.join(IMPORT_DIR, name), "--range", rng], "import.log")
+    return "가져오기를 시작했습니다. 끝나면 [켜기]로 위키를 켜세요"
+
+
+def run_export(target, rng="all"):
+    if target not in ("mediawiki", "dokuwiki", "markdown", "opennamu"):
         return "알 수 없는 형식입니다"
+    if alive("import"):
+        return "가져오는 중입니다. 끝난 뒤에 내보내세요"
     if alive("export"):
         return "이미 내보내는 중입니다"
     if not os.path.exists(os.path.join(WIKI, "data.db")):
@@ -293,7 +324,13 @@ def run_export(target):
         return "위키 엔진이 시작하는 중입니다. 준비된 뒤에 다시 누르세요"
     os.makedirs(EXPORT_DIR, exist_ok=True)
     open(os.path.join(ROOT, "export.log"), "w").close()
-    spawn("export", [sys.executable, os.path.join(SCRIPTS, "convert_wiki.py"), WIKI, "--to", target], "export.log")
+    remember(export_range=rng)
+    if target == "opennamu":
+        spawn("export", [sys.executable, os.path.join(SCRIPTS, "wiki_pack.py"), "export", WIKI, "--range", rng],
+              "export.log")
+        return "내보내기를 시작했습니다(openNAMU 형식은 변환이 없어 빠릅니다)"
+    spawn("export", [sys.executable, os.path.join(SCRIPTS, "convert_wiki.py"), WIKI, "--to", target, "--range", rng],
+          "export.log")
     return "내보내기를 시작했습니다. 남은 시간은 진행 줄에 표시됩니다(전체 문서면 CPU 4개 기준 약 1시간)"
 
 
@@ -462,6 +499,15 @@ def status():
     st["running"]["p2ptunnel"] = alive("p2ptunnel")
     st["running"]["p2pwin"] = alive("p2pwin")
     st["running"]["export"] = alive("export")
+    st["running"]["import"] = alive("import")
+    st["import_files"], st["import_dir"] = import_files(), IMPORT_DIR
+    st["import_log"] = tail("import.log", 6)
+    st["export_range"], st["import_range"] = s.get("export_range", "all"), s.get("import_range", "all")
+    try:
+        import wiki_pack
+        st["cutoff"] = wiki_pack.cutoff(WIKI)
+    except Exception:
+        st["cutoff"] = ""
     st["export_log"] = tail("export.log", 6)
     st["export_dir"] = EXPORT_DIR
     st["public_url"] = tunnel_url()
@@ -539,17 +585,32 @@ Windows 가 '방화벽 허용' 창을 띄우면 허용을 눌러 주세요. 어�
 <p style="font-size:13px;color:#555">공유기 설정 없이 Cloudflare 임시 공개 주소(https)를 만듭니다. 켤 때마다 주소가 바뀝니다. [공개 끄기]를 누르기 전까지는 위키를 켤 때마다 다시 공개됩니다.<br>
 <b>공개 전에</b>: 위키에서 먼저 가입해 관리자가 되고, 관리자 설정 → 권한에서 비로그인(ip) 사용자의 편집을 막으세요.
 공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></details>
-<details class="sec" id="sec-export" data-default="0"><summary><h2>다른 위키로 내보내기</h2><span class="sum" id="sum-export"></span></summary>
+<details class="sec" id="sec-export" data-default="0"><summary><h2>내보내기</h2><span class="sum" id="sum-export"></span></summary>
+<div style="margin-bottom:6px">범위: <label><input type="radio" name="erange" value="all"> 전체 문서</label>
+<label><input type="radio" name="erange" value="changed"> <span class="cutlbl"></span> 이후 바뀐 문서만 (갱신기·P2P·직접 편집)</label></div>
+<button onclick="exp('opennamu')">유어위키(openNAMU) 형식으로 내보내기</button><br>
 <button onclick="exp('mediawiki')">MediaWiki 로 내보내기</button><button onclick="exp('dokuwiki')">DokuWiki 로 내보내기</button>
 <button onclick="exp('markdown')">Markdown 으로 내보내기</button>
 <div id="eprog" style="margin:6px 0;font-weight:bold"></div>
-<p style="font-size:13px;color:#555">위키의 모든 문서를 다른 위키 엔진에 넣을 수 있는 파일로 바꿔 <span id="expdir"></span> 폴더에 저장합니다.<br>
+<p style="font-size:13px;color:#555">위키의 문서를 파일로 만들어 <span id="expdir"></span> 폴더에 저장합니다.<br>
+유어위키(openNAMU): <code>yourwiki-opennamu-….db</code> → 다른 유어위키의 '가져오기'로 넣습니다. openNAMU 의 data.db 와 같은 형식(문서 표만, 계정·IP 기록은 넣지 않음)이라 '전체'는 새 openNAMU 에 그대로 써도 됩니다. '이후 바뀐 문서만'은 파일이 작아 나눠 주기 좋습니다.<br>
 MediaWiki: <code>yourwiki-mediawiki.xml.gz</code> → <code>php maintenance/run.php importDump</code> 로 가져옵니다.<br>
 DokuWiki: <code>yourwiki-dokuwiki.zip</code> → DokuWiki 폴더에 풀고 <code>php bin/indexer.php</code> 로 색인을 만듭니다.<br>
 Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나. Obsidian 같은 편집기에서 폴더째 엽니다.<br>
 전체 문서(약 180만 개)는 CPU 4개 PC 기준 약 1시간, 디스크는 3~10GB 가 필요합니다. 진행 중에는 남은 시간이 표시됩니다.<br>
 표·목록·각주·접기·틀 등 흔한 문법을 옮기고, 이미지와 #!html 은 옮기지 않습니다. 모든 문서의 출처·라이선스 고지는 그대로 남으니 지우지 마세요(CC BY-NC-SA 2.0 KR).</p>
 <pre id="elog"></pre></details>
+<details class="sec" id="sec-import" data-default="0"><summary><h2>가져오기 (openNAMU 형식)</h2><span class="sum" id="sum-import"></span></summary>
+<div style="margin-bottom:6px">범위: <label><input type="radio" name="irange" value="all"> 파일의 전체 문서</label>
+<label><input type="radio" name="irange" value="changed"> <span class="cutlbl"></span> 이후 바뀐 문서만</label></div>
+<select id="ifile"></select> <button onclick="imp()">가져오기</button>
+<div id="iprog" style="margin:6px 0;font-weight:bold"></div>
+<p style="font-size:13px;color:#555">다른 유어위키가 내보낸 <code>yourwiki-opennamu-….db</code> 나 다른 openNAMU 위키의 <code>data.db</code> 를
+<code id="impdir"></code> 폴더에 넣고 고르세요.<br>
+문서마다 내 쪽보다 새 판만 역사 뒤에 이어 붙입니다. 내 쪽이 같거나 더 새로우면 건너뛰고, 지우기는 옮기지 않습니다.
+가져온 판은 역사 요약에 [가져옴 파일이름] 이 붙습니다. <b>위키를 끈 상태에서만</b> 가져옵니다.<br>
+받은 파일의 내용은 검증되지 않습니다(P2P 와 달리 나무위키와 맞춰 보지 않음). 믿을 수 있는 사람에게서 받은 파일만 넣으세요.</p>
+<pre id="ilog"></pre></details>
 <details class="sec" id="sec-update" data-default="0"><summary><h2>새 판 알림</h2><span class="sum" id="sum-update"></span></summary>
 <label><input type="checkbox" id="updon" onchange="api('/api/update_notice?on='+(this.checked?1:0)).then(load)"> GitHub 에 새 판이 나오면 알려 주기</label>
 <button onclick="api('/api/update_check').then(load)">지금 확인</button>
@@ -567,7 +628,10 @@ async function act2(p){alert(await api('/api/'+p));load()}
 async function pub(){if(confirm('위키를 인터넷에 공개할까요? 누구나 주소로 접속할 수 있게 됩니다.')){act2('tunnel?on=1')}}
 async function setColor(c){await api('/api/color?c='+encodeURIComponent(c));load()}
 async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 수 있습니다.')){alert(await api('/api/install?edition='+e));load()}}
-async function exp(t){if(confirm('내보낼까요? 문서가 많아 오래 걸리고 디스크 공간이 수 GB 필요합니다.')){alert(await api('/api/export?to='+t));load()}}
+function rng(n){var x=document.querySelector('input[name='+n+']:checked');return x?x.value:'all'}
+async function exp(t){var r=rng('erange');if(confirm((r==='changed'?'설치한 판 이후 바뀐 문서만':'전체 문서를')+' 내보낼까요?'+(r==='all'?' 문서가 많아 오래 걸리고 디스크 공간이 수~수십 GB 필요합니다.':''))){alert(await api('/api/export?to='+t+'&range='+r));load()}}
+async function imp(){var f=document.getElementById('ifile').value;if(!f){alert('import 폴더에 파일을 넣은 뒤 고르세요');return}
+if(confirm(f+' 을(를) 가져올까요? ('+(rng('irange')==='changed'?'설치한 판 이후 바뀐 문서만':'파일의 전체 문서')+')')){alert(await api('/api/import?file='+encodeURIComponent(f)+'&range='+rng('irange')));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
 function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -615,6 +679,16 @@ document.getElementById('elog').textContent=s.export_log.join('');
 var pl=s.export_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')).pop();
 document.getElementById('eprog').textContent=s.running.export?('내보내는 중 · '+(pl||'준비 중…')):(pl&&pl.startsWith('완료')?pl:'');
 document.getElementById('expdir').textContent=s.export_dir;
+document.querySelectorAll('.cutlbl').forEach(x=>x.textContent='설치한 판('+(s.cutoff||'?')+')');
+if(!rng.init){rng.init=1;document.querySelectorAll('input[name=erange]').forEach(x=>x.checked=x.value==s.export_range);
+document.querySelectorAll('input[name=irange]').forEach(x=>x.checked=x.value==s.import_range)}
+var fs=document.getElementById('ifile'),fk=s.import_files.join('\n');if(fs.dataset.k!==fk){var keep=fs.value;fs.dataset.k=fk;
+fs.innerHTML=s.import_files.length?s.import_files.map(f=>'<option>'+esc(f)+'</option>').join(''):'<option value="">(import 폴더가 비어 있음)</option>';if(keep)fs.value=keep}
+document.getElementById('impdir').textContent=s.import_dir;document.getElementById('ilog').textContent=s.import_log.join('');
+var il=s.import_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')||l.startsWith('가져온')).pop();
+var ig=s.import_log.filter(l=>l.startsWith('가져온')).pop();
+document.getElementById('iprog').textContent=s.running.import?('가져오는 중 · '+(il||'준비 중…')):(ig||il||'');
+sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
 document.querySelectorAll('details.sec').forEach(function(d){
@@ -690,7 +764,11 @@ class Handler(BaseHTTPRequestHandler):
             save_settings(st)
             msg = "새 판 알림을 " + ("켰습니다" if st["update_notice"] else "껐습니다")
         elif u.path == "/api/export":
-            msg = run_export((q.get("to") or [""])[0])
+            rng = "changed" if (q.get("range") or ["all"])[0] == "changed" else "all"
+            msg = run_export((q.get("to") or [""])[0], rng)
+        elif u.path == "/api/import":
+            rng = "changed" if (q.get("range") or ["all"])[0] == "changed" else "all"
+            msg = run_import((q.get("file") or [""])[0], rng)
         elif u.path == "/api/sync":
             s = settings()
             s["sync"] = (q.get("mode") or ["queue"])[0]
@@ -730,6 +808,7 @@ def update_loop():
 
 def main():
     cleanup_leftovers()
+    os.makedirs(IMPORT_DIR, exist_ok=True)  # 가져올 파일을 넣는 곳
     threading.Thread(target=update_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
     url = f"http://127.0.0.1:{PANEL_PORT}/"

@@ -10,3 +10,5 @@ __pycache__/
 update.json
 yourwiki.conf
 panel.json.*
+import/
+export/

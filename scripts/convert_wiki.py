@@ -653,10 +653,23 @@ def convert(text, title, target):
 
 
 # ---------------------------------------------------------------- 내보내기
+RANGE = "all"  # changed: 설치한 판 이후 바뀐 문서만(wiki_pack.changed_where)
+
+
+def _pick(wiki_dir):
+    """범위 조건: (where 절, 인자)."""
+    if RANGE != "changed":
+        return "", ()
+    import wiki_pack
+    return (f" where title in (select title from history where {wiki_pack.changed_where()})",
+            wiki_pack.changed_args(wiki_pack.cutoff(wiki_dir)))
+
+
 def _raw_pages(wiki_dir, limit=0):
     db = sqlite3.connect(f"file:{os.path.join(wiki_dir, 'data.db')}?mode=ro", uri=True, timeout=60)
-    sql = "select title, data from data order by title" + (f" limit {int(limit)}" if limit else "")
-    for title, data in db.execute(sql):
+    where, args = _pick(wiki_dir)
+    sql = "select title, data from data" + where + " order by title" + (f" limit {int(limit)}" if limit else "")
+    for title, data in db.execute(sql, args):
         if title.startswith(SKIP_PREFIX) or data is None:
             continue
         yield title, data
@@ -693,7 +706,8 @@ def pages(wiki_dir, target, limit=0, jobs=1):
 
 def count_pages(wiki_dir, limit=0):
     db = sqlite3.connect(f"file:{os.path.join(wiki_dir, 'data.db')}?mode=ro", uri=True, timeout=60)
-    n = db.execute("select count(*) from data").fetchone()[0]
+    where, args = _pick(wiki_dir)
+    n = db.execute("select count(*) from data" + where, args).fetchone()[0]
     db.close()
     return min(n, limit) if limit else n
 
@@ -814,12 +828,20 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="시험용: N개만")
     ap.add_argument("--jobs", type=int, default=max(1, min(8, (os.cpu_count() or 2) - 1)),
                     help="변환에 쓸 CPU 수(기본: 전체 - 1, 최대 8)")
+    ap.add_argument("--range", choices=["all", "changed"], default="all",
+                    help="changed: 설치한 판(예: 2026-08) 이후 바뀐 문서만")
     args = ap.parse_args()
+    global RANGE
+    RANGE = args.range
     names = {"mediawiki": "yourwiki-mediawiki.xml.gz", "dokuwiki": "yourwiki-dokuwiki.zip",
              "markdown": "yourwiki-markdown.zip"}
     out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.wiki_dir)), "export", names[args.to])
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    print(f"{args.to} 로 내보내기 시작 → {out} (CPU {args.jobs}개)", flush=True)
+    if RANGE == "changed":
+        import wiki_pack
+        out = re.sub(r"(\.xml\.gz|\.zip)$", f"-{wiki_pack.cutoff(args.wiki_dir)}-이후\\1", out) if not args.out else out
+    print(f"{args.to} 로 내보내기 시작 → {out} (CPU {args.jobs}개"
+          + (", 설치한 판 이후 바뀐 문서만" if RANGE == "changed" else "") + ")", flush=True)
     print(NOTICE, flush=True)
     t0 = time.time()
     n = {"mediawiki": export_mediawiki, "dokuwiki": export_dokuwiki,
