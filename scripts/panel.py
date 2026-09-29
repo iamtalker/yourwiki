@@ -295,7 +295,7 @@ def import_files():
         return []
 
 
-def run_import(name, rng):
+def run_import(name):
     if alive("import"):
         return "이미 가져오는 중입니다"
     if not os.path.exists(os.path.join(WIKI, "data.db")):
@@ -304,14 +304,14 @@ def run_import(name, rng):
         return "import 폴더에서 파일을 고르세요"
     if alive("engine") or alive("export") or alive("install"):
         return "먼저 위키를 끄세요(가져오기는 위키 DB 를 바꾸므로 위키가 꺼져 있을 때만 합니다)"
-    remember(import_range=rng)
     open(os.path.join(ROOT, "import.log"), "w").close()
     spawn("import", [sys.executable, os.path.join(SCRIPTS, "wiki_pack.py"), "import", WIKI,
-                     os.path.join(IMPORT_DIR, name), "--range", rng], "import.log")
+                     os.path.join(IMPORT_DIR, name)], "import.log")
     return "가져오기를 시작했습니다. 끝나면 [켜기]로 위키를 켜세요"
 
 
-def run_export(target, rng="all"):
+def run_export(target, since="", until=""):
+    """since·until(YYYY-MM-DD) 를 주면 그 기간에 바뀐 문서만, 없으면 전체."""
     if target not in ("mediawiki", "dokuwiki", "markdown", "opennamu"):
         return "알 수 없는 형식입니다"
     if alive("import"):
@@ -324,12 +324,12 @@ def run_export(target, rng="all"):
         return "위키 엔진이 시작하는 중입니다. 준비된 뒤에 다시 누르세요"
     os.makedirs(EXPORT_DIR, exist_ok=True)
     open(os.path.join(ROOT, "export.log"), "w").close()
-    remember(export_range=rng)
+    remember(export_range="period" if since or until else "all")
+    span = (["--since", since] if since else []) + (["--until", until] if until else [])
     if target == "opennamu":
-        spawn("export", [sys.executable, os.path.join(SCRIPTS, "wiki_pack.py"), "export", WIKI, "--range", rng],
-              "export.log")
+        spawn("export", [sys.executable, os.path.join(SCRIPTS, "wiki_pack.py"), "export", WIKI] + span, "export.log")
         return "내보내기를 시작했습니다(openNAMU 형식은 변환이 없어 빠릅니다)"
-    spawn("export", [sys.executable, os.path.join(SCRIPTS, "convert_wiki.py"), WIKI, "--to", target, "--range", rng],
+    spawn("export", [sys.executable, os.path.join(SCRIPTS, "convert_wiki.py"), WIKI, "--to", target] + span,
           "export.log")
     return "내보내기를 시작했습니다. 남은 시간은 진행 줄에 표시됩니다(전체 문서면 CPU 4개 기준 약 1시간)"
 
@@ -502,12 +502,20 @@ def status():
     st["running"]["import"] = alive("import")
     st["import_files"], st["import_dir"] = import_files(), IMPORT_DIR
     st["import_log"] = tail("import.log", 6)
-    st["export_range"], st["import_range"] = s.get("export_range", "all"), s.get("import_range", "all")
-    try:
-        import wiki_pack
-        st["cutoff"] = wiki_pack.cutoff(WIKI)
-    except Exception:
-        st["cutoff"] = ""
+    st["export_range"] = s.get("export_range", "period")
+    # 기본 기간: 기본 데이터(덤프) 마지막 날 다음 날 ~ 오늘. 기본 데이터 날짜는 10분에 한 번만 읽는다(엔진이 켜지는 중엔 안 읽음)
+    if st["installed"] and not starting and time.time() - _cache.get("base_at", 0) > 600:
+        try:
+            import wiki_pack
+            _cache["base_end"], _cache["base_at"] = wiki_pack.base_end(WIKI), time.time()
+        except Exception:
+            pass
+    import datetime
+    today = datetime.date.today()
+    be = _cache.get("base_end", "")
+    st["base_end"] = be
+    st["period"] = [((datetime.date.fromisoformat(be) + datetime.timedelta(days=1)).isoformat() if be
+                     else (today - datetime.timedelta(days=30)).isoformat()), today.isoformat()]
     st["export_log"] = tail("export.log", 6)
     st["export_dir"] = EXPORT_DIR
     st["public_url"] = tunnel_url()
@@ -586,14 +594,16 @@ Windows 가 '방화벽 허용' 창을 띄우면 허용을 눌러 주세요. 어�
 <b>공개 전에</b>: 위키에서 먼저 가입해 관리자가 되고, 관리자 설정 → 권한에서 비로그인(ip) 사용자의 편집을 막으세요.
 공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></details>
 <details class="sec" id="sec-export" data-default="0"><summary><h2>내보내기</h2><span class="sum" id="sum-export"></span></summary>
-<div style="margin-bottom:6px">범위: <label><input type="radio" name="erange" value="all"> 전체 문서</label>
-<label><input type="radio" name="erange" value="changed"> <span class="cutlbl"></span> 이후 바뀐 문서만 (갱신기·P2P·직접 편집)</label></div>
+<div style="margin-bottom:6px">범위: <label><input type="radio" name="erange" value="period"> 기간</label>
+<input type="date" id="esince"> ~ <input type="date" id="euntil"> 에 바뀐 문서만
+<label style="margin-left:8px"><input type="radio" name="erange" value="all"> 전체 문서</label>
+<div style="font-size:12px;color:#666">기본 기간은 기본 데이터(<span id="baseend"></span>까지) 다음 날부터 오늘까지입니다. 기간을 고르면 그 기간에 생긴 판만 담고, 본문은 기간 안의 마지막 판입니다.</div></div>
 <button onclick="exp('opennamu')">유어위키(openNAMU) 형식으로 내보내기</button><br>
 <button onclick="exp('mediawiki')">MediaWiki 로 내보내기</button><button onclick="exp('dokuwiki')">DokuWiki 로 내보내기</button>
 <button onclick="exp('markdown')">Markdown 으로 내보내기</button>
 <div id="eprog" style="margin:6px 0;font-weight:bold"></div>
 <p style="font-size:13px;color:#555">위키의 문서를 파일로 만들어 <span id="expdir"></span> 폴더에 저장합니다.<br>
-유어위키(openNAMU): <code>yourwiki-opennamu-….db</code> → 다른 유어위키의 '가져오기'로 넣습니다. openNAMU 의 data.db 와 같은 형식(문서 표만, 계정·IP 기록은 넣지 않음)이라 '전체'는 새 openNAMU 에 그대로 써도 됩니다. '이후 바뀐 문서만'은 파일이 작아 나눠 주기 좋습니다.<br>
+유어위키(openNAMU): <code>yourwiki-opennamu-….db</code> → 다른 유어위키의 '가져오기'로 넣습니다. openNAMU 의 data.db 와 같은 형식(문서 표만, 계정·IP 기록은 넣지 않음)이라 '전체'는 새 openNAMU 에 그대로 써도 됩니다. 기간을 고르면 파일이 작아 나눠 주기 좋습니다.<br>
 MediaWiki: <code>yourwiki-mediawiki.xml.gz</code> → <code>php maintenance/run.php importDump</code> 로 가져옵니다.<br>
 DokuWiki: <code>yourwiki-dokuwiki.zip</code> → DokuWiki 폴더에 풀고 <code>php bin/indexer.php</code> 로 색인을 만듭니다.<br>
 Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나. Obsidian 같은 편집기에서 폴더째 엽니다.<br>
@@ -601,8 +611,6 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 표·목록·각주·접기·틀 등 흔한 문법을 옮기고, 이미지와 #!html 은 옮기지 않습니다. 모든 문서의 출처·라이선스 고지는 그대로 남으니 지우지 마세요(CC BY-NC-SA 2.0 KR).</p>
 <pre id="elog"></pre></details>
 <details class="sec" id="sec-import" data-default="0"><summary><h2>가져오기 (openNAMU 형식)</h2><span class="sum" id="sum-import"></span></summary>
-<div style="margin-bottom:6px">범위: <label><input type="radio" name="irange" value="all"> 파일의 전체 문서</label>
-<label><input type="radio" name="irange" value="changed"> <span class="cutlbl"></span> 이후 바뀐 문서만</label></div>
 <select id="ifile"></select> <button onclick="imp()">가져오기</button>
 <div id="iprog" style="margin:6px 0;font-weight:bold"></div>
 <p style="font-size:13px;color:#555">다른 유어위키가 내보낸 <code>yourwiki-opennamu-….db</code> 나 다른 openNAMU 위키의 <code>data.db</code> 를
@@ -629,9 +637,12 @@ async function pub(){if(confirm('위키를 인터넷에 공개할까요? 누구�
 async function setColor(c){await api('/api/color?c='+encodeURIComponent(c));load()}
 async function install(e){if(confirm('설치할까요? 수십 분 이상 걸릴 수 있습니다.')){alert(await api('/api/install?edition='+e));load()}}
 function rng(n){var x=document.querySelector('input[name='+n+']:checked');return x?x.value:'all'}
-async function exp(t){var r=rng('erange');if(confirm((r==='changed'?'설치한 판 이후 바뀐 문서만':'전체 문서를')+' 내보낼까요?'+(r==='all'?' 문서가 많아 오래 걸리고 디스크 공간이 수~수십 GB 필요합니다.':''))){alert(await api('/api/export?to='+t+'&range='+r));load()}}
+async function exp(t){var r=rng('erange'),a=document.getElementById('esince').value,b=document.getElementById('euntil').value;
+if(r==='period'&&(!a||!b)){alert('기간을 고르세요');return}
+if(confirm((r==='period'?a+' ~ '+b+' 에 바뀐 문서를':'전체 문서를')+' 내보낼까요?'+(r==='all'?' 문서가 많아 오래 걸리고 디스크 공간이 수~수십 GB 필요합니다.':''))){
+alert(await api('/api/export?to='+t+(r==='period'?'&since='+a+'&until='+b:'')));load()}}
 async function imp(){var f=document.getElementById('ifile').value;if(!f){alert('import 폴더에 파일을 넣은 뒤 고르세요');return}
-if(confirm(f+' 을(를) 가져올까요? ('+(rng('irange')==='changed'?'설치한 판 이후 바뀐 문서만':'파일의 전체 문서')+')')){alert(await api('/api/import?file='+encodeURIComponent(f)+'&range='+rng('irange')));load()}}
+if(confirm(f+' 을(를) 가져올까요?')){alert(await api('/api/import?file='+encodeURIComponent(f)));load()}}
 async function setSync(m){await api('/api/sync?mode='+m);load()}
 function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+'/','_blank')}
 function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -679,9 +690,9 @@ document.getElementById('elog').textContent=s.export_log.join('');
 var pl=s.export_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')).pop();
 document.getElementById('eprog').textContent=s.running.export?('내보내는 중 · '+(pl||'준비 중…')):(pl&&pl.startsWith('완료')?pl:'');
 document.getElementById('expdir').textContent=s.export_dir;
-document.querySelectorAll('.cutlbl').forEach(x=>x.textContent='설치한 판('+(s.cutoff||'?')+')');
+document.getElementById('baseend').textContent=s.base_end||'알 수 없음';
 if(!rng.init){rng.init=1;document.querySelectorAll('input[name=erange]').forEach(x=>x.checked=x.value==s.export_range);
-document.querySelectorAll('input[name=irange]').forEach(x=>x.checked=x.value==s.import_range)}
+document.getElementById('esince').value=s.period[0];document.getElementById('euntil').value=s.period[1]}
 var fs=document.getElementById('ifile'),fk=s.import_files.join('\n');if(fs.dataset.k!==fk){var keep=fs.value;fs.dataset.k=fk;
 fs.innerHTML=s.import_files.length?s.import_files.map(f=>'<option>'+esc(f)+'</option>').join(''):'<option value="">(import 폴더가 비어 있음)</option>';if(keep)fs.value=keep}
 document.getElementById('impdir').textContent=s.import_dir;document.getElementById('ilog').textContent=s.import_log.join('');
@@ -730,7 +741,6 @@ class Handler(BaseHTTPRequestHandler):
             remember(wiki_on=False)
             msg = stop_wiki()
         elif u.path == "/api/color":
-            import re
             c = (q.get("c") or [""])[0]
             if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
                 st = settings()
@@ -764,11 +774,15 @@ class Handler(BaseHTTPRequestHandler):
             save_settings(st)
             msg = "새 판 알림을 " + ("켰습니다" if st["update_notice"] else "껐습니다")
         elif u.path == "/api/export":
-            rng = "changed" if (q.get("range") or ["all"])[0] == "changed" else "all"
-            msg = run_export((q.get("to") or [""])[0], rng)
+            since, until = (q.get("since") or [""])[0], (q.get("until") or [""])[0]
+            if any(d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) for d in (since, until)):
+                msg = "날짜 형식이 올바르지 않습니다"
+            elif since and until and since > until:
+                msg = "시작일이 끝일보다 늦습니다"
+            else:
+                msg = run_export((q.get("to") or [""])[0], since, until)
         elif u.path == "/api/import":
-            rng = "changed" if (q.get("range") or ["all"])[0] == "changed" else "all"
-            msg = run_import((q.get("file") or [""])[0], rng)
+            msg = run_import((q.get("file") or [""])[0])
         elif u.path == "/api/sync":
             s = settings()
             s["sync"] = (q.get("mode") or ["queue"])[0]

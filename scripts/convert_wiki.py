@@ -653,23 +653,24 @@ def convert(text, title, target):
 
 
 # ---------------------------------------------------------------- 내보내기
-RANGE = "all"  # changed: 설치한 판 이후 바뀐 문서만(wiki_pack.changed_where)
+PERIOD = ("", "")  # (시작일, 끝일): 주면 그 기간에 바뀐 문서만, 본문은 기간 안의 마지막 판
 
 
-def _pick(wiki_dir):
-    """범위 조건: (where 절, 인자)."""
-    if RANGE != "changed":
-        return "", ()
+def _period_args():
     import wiki_pack
-    return (f" where title in (select title from history where {wiki_pack.changed_where()})",
-            wiki_pack.changed_args(wiki_pack.cutoff(wiki_dir)))
+    return wiki_pack.period_args(*PERIOD)
 
 
 def _raw_pages(wiki_dir, limit=0):
     db = sqlite3.connect(f"file:{os.path.join(wiki_dir, 'data.db')}?mode=ro", uri=True, timeout=60)
-    where, args = _pick(wiki_dir)
-    sql = "select title, data from data" + where + " order by title" + (f" limit {int(limit)}" if limit else "")
-    for title, data in db.execute(sql, args):
+    lim = f" limit {int(limit)}" if limit else ""
+    if any(PERIOD):
+        rows = db.execute("select h.title, h.data from history h join (select title, max(id + 0) r from history "
+                          "where date between ? and ? group by title) p on p.title = h.title and h.id + 0 = p.r "
+                          "order by h.title" + lim, _period_args())
+    else:
+        rows = db.execute("select title, data from data order by title" + lim)
+    for title, data in rows:
         if title.startswith(SKIP_PREFIX) or data is None:
             continue
         yield title, data
@@ -706,8 +707,10 @@ def pages(wiki_dir, target, limit=0, jobs=1):
 
 def count_pages(wiki_dir, limit=0):
     db = sqlite3.connect(f"file:{os.path.join(wiki_dir, 'data.db')}?mode=ro", uri=True, timeout=60)
-    where, args = _pick(wiki_dir)
-    n = db.execute("select count(*) from data" + where, args).fetchone()[0]
+    if any(PERIOD):
+        n = db.execute("select count(distinct title) from history where date between ? and ?", _period_args()).fetchone()[0]
+    else:
+        n = db.execute("select count(*) from data").fetchone()[0]
     db.close()
     return min(n, limit) if limit else n
 
@@ -828,20 +831,22 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="시험용: N개만")
     ap.add_argument("--jobs", type=int, default=max(1, min(8, (os.cpu_count() or 2) - 1)),
                     help="변환에 쓸 CPU 수(기본: 전체 - 1, 최대 8)")
-    ap.add_argument("--range", choices=["all", "changed"], default="all",
-                    help="changed: 설치한 판(예: 2026-08) 이후 바뀐 문서만")
+    ap.add_argument("--since", dest="frm", default="", help="이 날(YYYY-MM-DD)부터 바뀐 문서만")
+    ap.add_argument("--until", dest="until", default="", help="이 날(YYYY-MM-DD)까지 바뀐 문서만")
     args = ap.parse_args()
-    global RANGE
-    RANGE = args.range
+    global PERIOD
+    for d in (args.frm, args.until):
+        if d and not re.match(r"\d{4}-\d{2}-\d{2}$", d):
+            raise SystemExit(f"날짜는 YYYY-MM-DD 로: {d}")
+    PERIOD = (args.frm, args.until)
     names = {"mediawiki": "yourwiki-mediawiki.xml.gz", "dokuwiki": "yourwiki-dokuwiki.zip",
              "markdown": "yourwiki-markdown.zip"}
     out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.wiki_dir)), "export", names[args.to])
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    if RANGE == "changed":
-        import wiki_pack
-        out = re.sub(r"(\.xml\.gz|\.zip)$", f"-{wiki_pack.cutoff(args.wiki_dir)}-이후\\1", out) if not args.out else out
-    print(f"{args.to} 로 내보내기 시작 → {out} (CPU {args.jobs}개"
-          + (", 설치한 판 이후 바뀐 문서만" if RANGE == "changed" else "") + ")", flush=True)
+    span = f"{args.frm or '처음'}~{args.until or time.strftime('%Y-%m-%d')}" if any(PERIOD) else ""
+    if span and not args.out:
+        out = re.sub(r"(\.xml\.gz|\.zip)$", f"-{span}\\1", out)
+    print(f"{args.to} 로 내보내기 시작 → {out} (CPU {args.jobs}개" + (f", 기간 {span}" if span else "") + ")", flush=True)
     print(NOTICE, flush=True)
     t0 = time.time()
     n = {"mediawiki": export_mediawiki, "dokuwiki": export_dokuwiki,
