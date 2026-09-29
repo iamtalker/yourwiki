@@ -180,16 +180,14 @@ CPU 여러 개로 나눠 변환하고, 진행 중에는 남은 시간을 보여 
 관리판의 **내보내기 → 유어위키(openNAMU) 형식**은 openNAMU 의 `data.db` 와 같은 SQLite 파일을 만듭니다(`export/yourwiki-opennamu-….db`).
 문서 표(data·history·data_set·back)만 담고, 사용자 계정·접속 기록·토론은 넣지 않습니다. 변환이 없어 빠릅니다.
 
-- **기간**(모든 내보내기에 공통): 시작일~끝일에 바뀐 문서만, 또는 **전체 문서**. 기본 기간은 **기본 데이터 다음 날부터 오늘까지**입니다
-  (예: 기본 데이터가 2026-08-30 까지면 2026-08-31 ~ 오늘). 기간 안에 생긴 판만 담고, 본문은 기간 안의 마지막 판입니다.
-  기간 내보내기는 파일이 작아 다른 사람에게 나눠 주기 좋습니다.
+- **범위**(모든 내보내기와 가져오기에 공통): **전체 문서** 또는 **설치한 판(예: 2026-08) 이후 바뀐 문서만**
+  (갱신기·P2P·직접 편집으로 생긴 판. 덤프에서 온 판은 빠짐). '이후 바뀐 문서만'은 파일이 작아 다른 사람에게 나눠 주기 좋습니다.
 - '전체'로 내보낸 파일은 새 openNAMU 의 `data.db` 로 그대로 써도 됩니다(없는 표는 openNAMU 가 켤 때 만듭니다).
 - **가져오기**: 받은 파일(유어위키가 내보낸 것이나 다른 openNAMU 의 `data.db`)을 유어위키 폴더의 `import/` 에 넣고, 위키를 끈 뒤
   관리판의 **가져오기**에서 고릅니다. 문서마다 내 쪽보다 새 판만 역사 뒤에 이어 붙이고, 내 쪽이 같거나 더 새로우면 건너뜁니다(지우기는 옮기지 않음).
   가져온 판의 역사 요약에는 `[가져옴 파일이름]` 이 붙습니다. 파일 내용은 P2P 처럼 검증되지 않으니 믿을 수 있는 곳에서 받은 것만 넣으세요.
-- 가져오기에는 기간 선택이 없습니다. 파일에 든 것을 모두 살펴봅니다.
-- 명령줄: `python scripts/wiki_pack.py export wiki --since 2026-08-31 --until 2026-09-29`, `python scripts/wiki_pack.py import wiki 파일.db`,
-  기본 기간 보기 `python scripts/wiki_pack.py base wiki` (MediaWiki·DokuWiki·Markdown 은 `convert_wiki.py … --since … --until …`).
+- 명령줄: `python scripts/wiki_pack.py export wiki --range changed`, `python scripts/wiki_pack.py import wiki 파일.db --range all`
+  (MediaWiki·DokuWiki·Markdown 은 `convert_wiki.py … --range changed`).
 
 ## 새 판 알림
 

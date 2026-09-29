@@ -4,20 +4,19 @@
 사용자 계정·접속 기록·토론 같은 표는 넣지 않는다(비밀번호 해시·IP 가 있으므로).
 '전체'로 내보낸 파일은 새 openNAMU 의 data.db 로 그대로 써도 된다(없는 표는 openNAMU 가 켤 때 만든다).
 
-범위(내보내기만)
-- 기간을 안 주면 모든 문서.
-- 기간(--since, --until)을 주면 그 기간에 생긴 판만 담는다. 본문은 기간 안의 마지막 판.
-  관리판의 기본 기간은 '기본 데이터 다음 날 ~ 오늘'이다(기본 데이터 = 설치한 덤프의 마지막 날짜).
+범위
+- all     : 모든 문서
+- changed : 설치한 판(예: 2026-08 덤프) 이후 바뀐 문서만 — 갱신기·P2P·직접 편집으로 생긴 판.
+            덤프에서 온 판(기록자 '나무위키 덤프' 등)과 기준일 이전 판은 빼고, 그 뒤의 판만 담는다.
 
-가져오기는 범위 없이 파일에 든 것을 모두 본다. openNAMU 형식 파일(유어위키가 내보낸 것, 또는 다른 openNAMU 의 data.db)을 받는다.
+가져오기는 openNAMU 형식 파일(유어위키가 내보낸 것, 또는 다른 openNAMU 의 data.db)을 받는다.
 - 문서마다 내 쪽 마지막 판보다 새 판만 역사 뒤에 이어 붙이고, 본문을 그 파일의 최신 본문으로 바꾼다.
 - 내 쪽이 같거나 더 새로우면 건너뛴다(덮어쓰지 않는다). 지우기는 옮기지 않는다.
 - 가져온 판은 역사의 '편집 요약' 앞에 [가져옴 파일이름] 을 붙여 어디서 왔는지 남긴다.
 - 위키 엔진이 꺼져 있을 때만 한다(켜진 채 DB 를 크게 바꾸면 엔진이 꼬일 수 있다).
 
-    python wiki_pack.py export WIKI_DIR [--since 2026-08-31] [--until 2026-09-29] [--out 파일]
-    python wiki_pack.py import WIKI_DIR 파일
-    python wiki_pack.py base WIKI_DIR      # 기본 데이터의 마지막 날짜와 기본 기간
+    python wiki_pack.py export WIKI_DIR [--range all|changed] [--out 파일]
+    python wiki_pack.py import WIKI_DIR 파일 [--range all|changed]
 """
 import argparse
 import json
@@ -33,44 +32,28 @@ FORMAT = "yourwiki-opennamu-1"
 NOTICE = ("이 파일의 문서 텍스트는 CC BY-NC-SA 2.0 KR 입니다. 상업적 이용은 금지됩니다. "
           "원 문서 주소·기여자·라이선스 고지를 지우지 마세요. 저작권은 각 문서의 기여자에게 있습니다.")
 CAT_RE = re.compile(r"\[\[분류:([^\]|#]+)")
-DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
+DEFAULT_CUTOFF = "2026-08-01"
 
 
-def base_end(wiki_dir):
-    """기본 데이터(설치한 덤프)의 마지막 날짜. 역사에서 덤프가 남긴 판의 가장 늦은 날짜로 정하고,
-    그게 없으면 wiki/edition.json 의 날짜, 그것도 없으면 ""."""
-    try:
-        db = ro(os.path.join(wiki_dir, "data.db"))
-        try:
-            d = max((db.execute("select max(date) from history where ip = ?", (ip,)).fetchone()[0] or "")
-                    for ip in DUMP_IPS[:2])
-        finally:
-            db.close()
-        if d:
-            return d[:10]
-    except sqlite3.Error:
-        pass
+def cutoff(wiki_dir):
+    """'이후 바뀐 것' 의 기준일 = 설치한 덤프의 날짜(wiki/edition.json). 모르면 2026-08-01."""
     try:
         d = json.load(open(os.path.join(wiki_dir, "edition.json"), encoding="utf-8-sig")).get("date", "")
-        if DATE_RE.match((d or "")[:10]):
+        if re.match(r"\d{4}-\d{2}-\d{2}", d or ""):
             return d[:10]
     except (OSError, ValueError):
         pass
-    return ""
+    return DEFAULT_CUTOFF
 
 
-def default_period(wiki_dir):
-    """(기본 데이터 다음 날, 오늘). 기본 데이터를 모르면 (오늘 - 30일, 오늘)."""
-    import datetime
-    today = datetime.date.today()
-    end = base_end(wiki_dir)
-    start = (datetime.date.fromisoformat(end) + datetime.timedelta(days=1)) if end else today - datetime.timedelta(days=30)
-    return start.isoformat(), today.isoformat()
+def changed_where(alias=""):
+    """history 에서 '기준일 이후, 덤프가 아닌 판' 을 고르는 조건(자리표시자: 기준일)."""
+    a = alias + "." if alias else ""
+    return f"{a}date >= ? and {a}ip not in ({','.join('?' * len(DUMP_IPS))})"
 
 
-def period_args(frm, to):
-    """history.date 비교용 (시작 00:00:00, 끝 23:59:59)."""
-    return (frm or "0000-00-00") + " 00:00:00", (to or "9999-12-31") + " 23:59:59"
+def changed_args(cut):
+    return (cut,) + DUMP_IPS
 
 
 def fmt_secs(sec):
@@ -102,11 +85,9 @@ def ro(path):
 
 
 # ---------------------------------------------------------------- 내보내기
-def export(wiki_dir, out, frm="", to=""):
-    """frm·to(YYYY-MM-DD) 가 없으면 전체, 있으면 그 기간에 생긴 판만."""
+def export(wiki_dir, out, rng="all"):
     src_path = os.path.join(wiki_dir, "data.db")
-    period = bool(frm or to)
-    lo_d, hi_d = period_args(frm, to)
+    cut = cutoff(wiki_dir)
     part = out + ".part"
     if os.path.exists(part):
         os.remove(part)
@@ -124,29 +105,24 @@ def export(wiki_dir, out, frm="", to=""):
     src.close()
     dst.execute("attach database ? as s", (f"file:{os.path.abspath(src_path)}?mode=ro",))
 
-    if period:
-        # 기간 안의 판만. 본문은 기간 안의 마지막 판(그 뒤에 또 바뀌었어도 기간 끝 시점의 모습)
-        dst.execute("create temp table pick (title text primary key, rev int)")
-        dst.execute("insert into pick select title, max(id + 0) from s.history where date between ? and ? "
-                    "group by title", (lo_d, hi_d))
+    if rng == "changed":
+        dst.execute("create temp table pick (title text primary key)")
+        dst.execute(f"insert or ignore into pick select distinct title from s.history where {changed_where()}",
+                    changed_args(cut))
         total = dst.execute("select count(*) from pick").fetchone()[0]
-        print(f"{frm or '처음'} ~ {to or '오늘'} 에 바뀐 문서 {total:,}개를 내보냅니다", flush=True)
-        dst.execute("insert into history select * from s.history where title in (select title from pick) "
-                    "and date between ? and ?", (lo_d, hi_d))
-        dst.execute("insert into data (title, data, type) select h.title, h.data, '' from history h "
-                    "join pick p on p.title = h.title and h.id + 0 = p.rev")
-        dst.execute("insert into data_set (doc_name, doc_rev, set_name, set_data) "
-                    "select h.title, '', 'last_edit', h.date from history h join pick p on p.title = h.title "
-                    "and h.id + 0 = p.rev")
-        dst.execute("insert into data_set (doc_name, doc_rev, set_name, set_data) "
-                    "select title, '', 'length', length(data) from data")
+        print(f"{cut} 이후 바뀐 문서 {total:,}개를 내보냅니다", flush=True)
+        dst.execute("insert into data select * from s.data where title in (select title from pick)")
+        dst.execute(f"insert into history select * from s.history where title in (select title from pick) "
+                    f"and {changed_where()}", changed_args(cut))
+        dst.execute("insert into data_set select * from s.data_set where doc_name in (select title from pick)")
         dst.execute("insert into back select * from s.back where link in (select title from pick)")
         n = total
     else:
         total = dst.execute("select count(*) from s.data").fetchone()[0]
         print(f"모든 문서 {total:,}개를 내보냅니다", flush=True)
         prog, n = Progress(total), 0
-        for t in TABLES:  # 진행을 보여 주며 나눠 옮긴다
+        # data 는 진행을 보여 주며 나눠 옮긴다. 나머지 표도 같은 방식.
+        for t in TABLES:
             lo, hi = dst.execute(f"select coalesce(min(rowid), 0), coalesce(max(rowid), -1) from s.{t}").fetchone()
             step = 50000
             for a in range(lo, hi + 1, step):
@@ -157,7 +133,7 @@ def export(wiki_dir, out, frm="", to=""):
                     prog.tick(n)
             print(f"  {t} 표 옮김", flush=True)
     dst.executemany("insert into yourwiki_pack values (?, ?)", [
-        ("format", FORMAT), ("range", f"{frm}~{to}" if period else "all"),
+        ("format", FORMAT), ("range", rng), ("cutoff", cut if rng == "changed" else ""),
         ("created", time.strftime("%Y-%m-%d %H:%M:%S")), ("docs", str(n)), ("license", NOTICE)])
     dst.commit()
     dst.execute("detach database s")
@@ -172,8 +148,8 @@ def export(wiki_dir, out, frm="", to=""):
     with open(re.sub(r"\.db$", "", out) + "-라이선스.txt", "w", encoding="utf-8") as f:
         f.write(NOTICE + "\n\n형식: openNAMU data.db 와 같은 SQLite(문서 표 data·history·data_set·back 만).\n"
                 "다른 유어위키에서는 관리판의 '가져오기'로 넣습니다(import 폴더에 이 파일을 두세요).\n"
-                + (f"기간: {frm or '처음'} ~ {to or '오늘'} 에 생긴 판만.\n" if period
-                   else "범위: 전체. 새 openNAMU 의 data.db 로 그대로 써도 됩니다.\n"))
+                + ("범위: 전체. 새 openNAMU 의 data.db 로 그대로 써도 됩니다.\n" if rng == "all"
+                   else f"범위: {cut} 이후 바뀐 문서만(그 뒤의 판만 담김).\n"))
     return n
 
 
@@ -186,7 +162,7 @@ def _has_index(db, table, first_col):
     return False
 
 
-def import_pack(wiki_dir, path):
+def import_pack(wiki_dir, path, rng="all"):
     name = os.path.basename(path)
     src = ro(path)
     tables = {r[0] for r in src.execute("select name from sqlite_master where type = 'table'")}
@@ -197,9 +173,15 @@ def import_pack(wiki_dir, path):
         print(f"유어위키 묶음: 범위 {meta.get('range')} · 문서 {meta.get('docs')}개 · 만든 때 {meta.get('created')}", flush=True)
     if not _has_index(src, "history", "title"):
         print("주의: 이 파일에는 역사 색인이 없어 가져오기가 느릴 수 있습니다", flush=True)
-    q = ("select title from data", ())
-    total = src.execute("select count(*) from data").fetchone()[0]
-    print(f"문서 {total:,}개를 살펴봅니다", flush=True)
+    cut = cutoff(wiki_dir)
+    if rng == "changed":
+        q = (f"select distinct title from history where {changed_where()}", changed_args(cut))
+        total = src.execute(f"select count(*) from ({q[0]})", q[1]).fetchone()[0]
+        print(f"{cut} 이후 바뀐 문서 {total:,}개를 살펴봅니다", flush=True)
+    else:
+        q = ("select title from data", ())
+        total = src.execute("select count(*) from data").fetchone()[0]
+        print(f"문서 {total:,}개를 살펴봅니다", flush=True)
     titles = (t for (t,) in ro(path).execute(*q))  # 제목 목록은 따로 연결해 흘려 읽는다(180만 개를 메모리에 올리지 않게)
 
     db = sqlite3.connect(os.path.join(wiki_dir, "data.db"), timeout=60)
@@ -207,8 +189,11 @@ def import_pack(wiki_dir, path):
     added = skipped = revs = 0
     tag = f"[가져옴 {name}] "
     for i, title in enumerate(titles, 1):
-        rows = src.execute("select id, data, date, ip, send, leng, hide from history where title = ? "
-                           "order by id + 0", (title,)).fetchall()
+        where, args = ("title = ?", (title,))
+        if rng == "changed":
+            where, args = f"title = ? and {changed_where()}", (title,) + changed_args(cut)
+        rows = src.execute(f"select id, data, date, ip, send, leng, hide from history where {where} "
+                           "order by id + 0", args).fetchall()
         cur = src.execute("select data from data where title = ?", (title,)).fetchone()
         body = cur[0] if cur else (rows[-1][1] if rows else None)
         if body is None or not rows:
@@ -264,33 +249,27 @@ def import_pack(wiki_dir, path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["export", "import", "base"])
+    ap.add_argument("action", choices=["export", "import"])
     ap.add_argument("wiki_dir")
     ap.add_argument("file", nargs="?", default="")
-    ap.add_argument("--since", dest="frm", default="", help="내보낼 기간의 시작일 YYYY-MM-DD")
-    ap.add_argument("--until", dest="to", default="", help="내보낼 기간의 끝일 YYYY-MM-DD")
+    ap.add_argument("--range", choices=["all", "changed"], default="all")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
-    for d in (args.frm, args.to):
-        if d and not DATE_RE.match(d):
-            raise SystemExit(f"날짜는 YYYY-MM-DD 로: {d}")
     t0 = time.time()
-    if args.action == "base":
-        print("기본 데이터 마지막 날:", base_end(args.wiki_dir) or "모름", "· 기본 기간:", *default_period(args.wiki_dir))
-    elif args.action == "export":
-        tag = "전체" if not (args.frm or args.to) else f"{args.frm or '처음'}~{args.to or time.strftime('%Y-%m-%d')}"
+    if args.action == "export":
+        cut = cutoff(args.wiki_dir)
         out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.wiki_dir)), "export",
-                                       f"yourwiki-opennamu-{tag}.db")
+                                       "yourwiki-opennamu-" + ("전체" if args.range == "all" else f"{cut}-이후") + ".db")
         os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
         print(f"유어위키(openNAMU) 형식으로 내보내기 시작 → {out}", flush=True)
         print(NOTICE, flush=True)
-        n = export(args.wiki_dir, out, args.frm, args.to)
+        n = export(args.wiki_dir, out, args.range)
         print(f"완료: 문서 {n:,}개, {time.time() - t0:.0f}초 → {out}", flush=True)
     else:
         if not args.file:
             raise SystemExit("가져올 파일을 주세요")
         print(f"가져오기 시작 ← {args.file}", flush=True)
-        n = import_pack(args.wiki_dir, args.file)
+        n = import_pack(args.wiki_dir, args.file, args.range)
         print(f"완료: 문서 {n:,}개, {time.time() - t0:.0f}초", flush=True)
 
 
