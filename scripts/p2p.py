@@ -756,8 +756,8 @@ def similarity(a, b):
 def audit_candidate(q):
     """나무위키에서 직접 다시 받아 맞춰 볼 P2P 문서 하나(수습 ID 의 최근 것부터)."""
     init(q)
-    r = q.execute("select title from shared where src = 'p2p' and audited = 0 and conv = ? "
-                  "order by (tier = 'probation') desc, at desc limit 1", (conv_id(),)).fetchone()
+    r = q.execute("select title from shared where src in ('p2p', 'import') and audited = 0 and conv = ? "
+                  "order by (tier in ('probation', 'import')) desc, at desc limit 1", (conv_id(),)).fetchone()
     return r[0] if r else None
 
 
@@ -776,7 +776,7 @@ def audit(q, wiki_dir, title, text, redirect, modified):
     """
     init(q)
     r = q.execute("select node, modified, sha, conv, text, redirect from shared "
-                  "where title = ? and src = 'p2p' and audited = 0", (title,)).fetchone()
+                  "where title = ? and src in ('p2p', 'import') and audited = 0", (title,)).fetchone()
     if not r:
         return None
     node, pmod, psha, pconv, ptext, predirect = r
@@ -810,7 +810,8 @@ def audit_missing(q, wiki_dir, title, kind):
     어느 쪽이든 같은 문서를 계속 검증하느라 요청을 낭비하지 않게 audited 로 표시한다.
     """
     init(q)
-    r = q.execute("select node, tier from shared where title = ? and src = 'p2p' and audited = 0", (title,)).fetchone()
+    r = q.execute("select node, tier from shared where title = ? and src in ('p2p', 'import') and audited = 0",
+                  (title,)).fetchone()
     if not r:
         return None
     node, tier = r
@@ -820,9 +821,13 @@ def audit_missing(q, wiki_dir, title, kind):
         return "unknown"
     restore(q, wiki_dir, title, node)
     q.execute("delete from shared where title = ?", (title,))
-    q.execute("update nodes set strikes = strikes + 1 where id = ?", (node,))
-    strikes = q.execute("select strikes from nodes where id = ?", (node,)).fetchone()[0]
-    if tier == "probation" and strikes >= STRIKES:
+    if node.startswith("file:"):  # 가져온 파일은 nodes 표에 없다(DHT 로 찾는 ID 가 아님)
+        strikes = int(get_meta(q, "strikes:" + node, "0") or 0) + 1
+        set_meta(q, "strikes:" + node, strikes)
+    else:
+        q.execute("update nodes set strikes = strikes + 1 where id = ?", (node,))
+        strikes = q.execute("select strikes from nodes where id = ?", (node,)).fetchone()[0]
+    if tier in ("probation", "import") and strikes >= STRIKES:
         ban(q, wiki_dir, node, f"나무위키에 없는 문서를 {strikes}번 줌(마지막: 「{title}」)")
         return "bad"
     q.commit()
@@ -830,10 +835,13 @@ def audit_missing(q, wiki_dir, title, kind):
 
 
 def ban(q, wiki_dir, node, why):
-    """거짓 내용을 준 ID 를 차단하고, 그 ID 에게서 받은 문서를 모두 되돌린 뒤 다시 받을 목록에 넣는다."""
+    """거짓 내용을 준 ID 를 차단하고, 그 ID 에게서 받은 문서를 모두 되돌린 뒤 다시 받을 목록에 넣는다.
+    node 가 'file:이름' 이면 가져오기(wiki_pack.py)로 넣은 파일이다: 그 파일에서 가져온 문서를 모두 되돌린다."""
     q.execute("update nodes set banned = 1, audits_bad = audits_bad + 1 where id = ?", (node,))
     q.execute("delete from hindex where node = ?", (node,))
-    titles = [r[0] for r in q.execute("select title from shared where node = ? and src = 'p2p'", (node,))]
+    if node.startswith("file:"):
+        set_meta(q, "bad:" + node, f"{now_str()} {why}")
+    titles = [r[0] for r in q.execute("select title from shared where node = ? and src in ('p2p', 'import')", (node,))]
     for t in titles:
         restore(q, wiki_dir, t, node)
         q.execute("delete from shared where title = ?", (t,))
@@ -841,7 +849,10 @@ def ban(q, wiki_dir, node, why):
         q.execute("insert into queue values (?, 3, '사보타주 되돌림', ?) on conflict(title) do update set "
                   "priority = max(priority, 3)", (t, time.time()))
     q.commit()
-    log(f"사보타주 감지: ID {node[:12]}… 차단 — {why}. 이 ID 에게서 받은 문서 {len(titles)}개를 되돌리고 다시 받습니다.")
+    if node.startswith("file:"):
+        log(f"가져온 파일에서 거짓 내용 확인: {node[5:]} — {why}. 이 파일에서 가져온 문서 {len(titles)}개를 되돌리고 다시 받습니다.")
+    else:
+        log(f"사보타주 감지: ID {node[:12]}… 차단 — {why}. 이 ID 에게서 받은 문서 {len(titles)}개를 되돌리고 다시 받습니다.")
 
 
 def restore(q, wiki_dir, title, node):
@@ -854,9 +865,11 @@ def restore(q, wiki_dir, title, node):
         db.execute("update data set data = ? where title = ?", (data, wt))
         rev = (db.execute("select max(id + 0) from history where title = ?", (wt,)).fetchone()[0] or 0) + 1
         db.execute("insert into history (id, title, data, date, ip, send, leng, hide, type) "
-                   "values (?, ?, ?, ?, '유어위키 P2P', ?, ?, '', '')",
+                   "values (?, ?, ?, ?, ?, ?, ?, '', '')",
                    (str(rev), wt, data, time.strftime("%Y-%m-%d %H:%M:%S"),
-                    f"사보타주로 판단한 ID({node[:12]}…)의 내용을 되돌림", str(len(data))))
+                    "유어위키 가져오기" if node.startswith("file:") else "유어위키 P2P",
+                    f"거짓 내용이 확인된 파일({node[5:]})에서 가져온 내용을 되돌림" if node.startswith("file:")
+                    else f"사보타주로 판단한 ID({node[:12]}…)의 내용을 되돌림", str(len(data))))
         db.execute("delete from data_set where doc_name = ? and set_name in ('last_edit', 'length')", (wt,))
         db.executemany("insert into data_set (doc_name, doc_rev, set_name, set_data) values (?, '', ?, ?)",
                        [(wt, "last_edit", last_edit or ""), (wt, "length", str(len(data)))])

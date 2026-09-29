@@ -32,6 +32,9 @@ FORMAT = "yourwiki-opennamu-1"
 NOTICE = ("이 파일의 문서 텍스트는 CC BY-NC-SA 2.0 KR 입니다. 상업적 이용은 금지됩니다. "
           "원 문서 주소·기여자·라이선스 고지를 지우지 마세요. 저작권은 각 문서의 기여자에게 있습니다.")
 CAT_RE = re.compile(r"\[\[분류:([^\]|#]+)")
+NAMU_IPS = ("유어위키 갱신기", "유어위키 P2P")   # '나무위키 최신판 그대로' 라고 주장하는 판(검증할 수 있음)
+NAMU_MOD_RE = re.compile(r"수정 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+REDIRECT_RE = re.compile(r"#(?:redirect|넘겨주기) ([^\n]+)", re.I)
 DEFAULT_CUTOFF = "2026-08-01"
 
 
@@ -185,8 +188,14 @@ def import_pack(wiki_dir, path, rng="all"):
     titles = (t for (t,) in ro(path).execute(*q))  # 제목 목록은 따로 연결해 흘려 읽는다(180만 개를 메모리에 올리지 않게)
 
     db = sqlite3.connect(os.path.join(wiki_dir, "data.db"), timeout=60)
+    # 검증: '나무위키 최신판 그대로' 라고 적힌 판은 P2P 처럼 갱신기가 나무위키와 맞춰 본다(p2p.audit).
+    # 거짓이 하나라도 확인되면 이 파일에서 가져온 문서를 모두 되돌린다. 그래서 바꾸기 전 내용을 p2p_backup 에 남긴다.
+    import p2p
+    uq = p2p.init(sqlite3.connect(os.path.join(wiki_dir, "updater.db"), timeout=60))
+    node = "file:" + name
+    uq.execute("delete from meta where k in (?, ?)", ("bad:" + node, "strikes:" + node))  # 같은 이름으로 다시 넣으면 새로 셈
     prog = Progress(total)
-    added = skipped = revs = 0
+    added = skipped = revs = checkable = 0
     tag = f"[가져옴 {name}] "
     for i, title in enumerate(titles, 1):
         where, args = ("title = ?", (title,))
@@ -207,6 +216,8 @@ def import_pack(wiki_dir, path, rng="all"):
             skipped += 1  # 내 쪽이 같거나 더 새롭다
             prog.tick(i)
             continue
+        before = db.execute("select set_data from data_set where doc_name = ? and set_name = 'last_edit'",
+                            (title,)).fetchone()
         rev = db.execute("select max(id + 0) from history where title = ?", (title,)).fetchone()[0] or 0
         for _, data, date, ip, send, leng, hide in new:
             rev += 1
@@ -236,14 +247,31 @@ def import_pack(wiki_dir, path, rng="all"):
         else:
             db.executemany("insert into back (link, title, type, data) values (?, ?, 'cat', '')",
                            [(title, "category:" + c.strip()) for c in set(CAT_RE.findall(body))])
+        _, _, _, ip, send, _, _ = new[-1]
+        m = NAMU_MOD_RE.search(send or "")
+        if ip in NAMU_IPS and m:
+            namu_title = "분류:" + title[9:] if title.startswith("category:") else title
+            r = REDIRECT_RE.match(body)
+            text = body if r else p2p.FOOTER_RE.sub("", body)
+            uq.execute("insert or ignore into p2p_backup values (?, ?, ?, ?, ?)",
+                       (namu_title, mine[0] if mine else None, before[0] if before else None, time.time(), node))
+            p2p.record(uq, namu_title, text, r.group(1).strip() if r else "", m.group(1), "import", node=node, tier="import")
+            checkable += 1
         added += 1
         if added % 2000 == 0:
+            uq.commit()
             db.commit()
         prog.tick(i)
     db.commit()
     db.close()
+    uq.commit()
+    uq.close()
     src.close()
     print(f"가져온 문서 {added:,}개(판 {revs:,}개) · 건너뜀 {skipped:,}개(내 쪽이 같거나 더 새로움)", flush=True)
+    if added:
+        print(f"검증: 나무위키 판이라고 적힌 {checkable:,}개는 갱신기가 틈틈이 나무위키와 맞춰 봅니다(거짓이면 이 파일에서 가져온 것을 모두 되돌림)."
+              + (f" 직접 편집한 판 {added - checkable:,}개는 나무위키와 비교할 수 없어 검증하지 않습니다." if added > checkable else ""),
+              flush=True)
     return added
 
 

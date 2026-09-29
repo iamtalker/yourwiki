@@ -11,6 +11,6 @@
 - **동봉 파일 `assets/`**: KaTeX(MIT), highlight.js(BSD-3-Clause), highlightjs-line-numbers.js(MIT),
   Monaco Editor CSS(MIT), Material Design Icons(Apache-2.0, iconify 경유).
 - **설치 때 받는 도구**(동봉하지 않음): openNAMU(BSD-3-Clause), Python(PSF License), 7-Zip 7zr(LGPL),
-  aria2(GPL-2.0), python-markdown(BSD-3-Clause).
+  aria2(GPL-2.0), python-markdown(BSD-3-Clause), cloudflared([공개하기]·P2P 창구를 쓸 때만, Apache-2.0).
 
 유어위키는 나무위키 운영사(umanle S.R.L.)와 관계없는 비공식 도구입니다.

@@ -54,7 +54,8 @@ SSH 가 끊겨도 계속되게 하려면 <code>tmux</code> 나 <code>screen</cod
 <div class="cmd"><code>bash server/yourwiki.sh status</code><button>복사</button></div>
 <div class="cmd"><code>bash server/yourwiki.sh stop</code><button>복사</button></div>
 <div class="cmd"><code>LISTEN=127.0.0.1:3000 SYNC=queue bash server/yourwiki.sh start</code><button>복사</button></div>
-<p class="muted"><code>LISTEN</code>: 받을 주소(기본 <code>0.0.0.0:3000</code> = 외부 공개). <code>SYNC</code>: <code>auto</code>(기본) / <code>queue</code>(갱신 단추로 요청한 문서만) / <code>off</code>.</p>
+<p class="muted"><code>LISTEN</code>: 받을 주소(기본 <code>0.0.0.0:3000</code> = 외부 공개). <code>SYNC</code>: <code>auto</code>(기본) / <code>queue</code>(갱신 단추로 요청한 문서만) / <code>off</code>.
+한 번 준 값은 <code>yourwiki.conf</code> 에 기억되어 다음부터 그냥 <code>start</code> 해도 그대로입니다. P2P 공유(<code>P2P=on</code>) 등 다른 설정은 README 를 보세요.</p>
 
 <h2>8. 공개 전에 할 일</h2>
 <ol>

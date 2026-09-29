@@ -160,8 +160,8 @@ def next_title(q, share=False):
     """다음에 받을 문서. share(P2P)면 같은 우선순위 안에서 순서를 섞어 피어마다 다른 문서를 받게 하고,
     대기열에 들어온 뒤에 친구나 검증된 ID 가 이미 받은 문서는 건너뛴다(P2P 작업자가 중계소에서 받는다)."""
     now = time.time()
-    if share and random.random() < p2p.AUDIT_SHARE:
-        t = p2p.audit_candidate(q)  # P2P 로 받은 문서를 나무위키에서 직접 받아 맞춰 본다(사보타주 검증)
+    if random.random() < p2p.AUDIT_SHARE:
+        t = p2p.audit_candidate(q)  # P2P·가져오기로 들어온 문서를 나무위키에서 직접 받아 맞춰 본다(사보타주 검증)
         if t:
             return t
     # 쿨다운 중인 문서는 버린다(같은 문서는 24시간에 한 번)
@@ -238,8 +238,7 @@ def refresh(f, q, wiki_dir, size_map, title, share=False):
     try:
         body = f.get("/w/" + urllib.parse.quote(title, safe=""))
     except Forbidden:
-        if share:
-            p2p.audit_missing(q, wiki_dir, title, "403")
+        p2p.audit_missing(q, wiki_dir, title, "403")
         q.execute("delete from queue where title = ?", (title,))
         q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), "forbidden"))
         q.commit()
@@ -247,8 +246,8 @@ def refresh(f, q, wiki_dir, size_map, title, share=False):
         return
     q.execute("delete from queue where title = ?", (title,))
     if body is None:
-        if share and p2p.audit_missing(q, wiki_dir, title, "404"):
-            log(f"P2P 로 받은 문서인데 나무위키에 없음 → 되돌림: {title}")
+        if p2p.audit_missing(q, wiki_dir, title, "404"):
+            log(f"P2P·가져오기로 들어온 문서인데 나무위키에 없음 → 되돌림: {title}")
         log(f"없음(404): {title}")
         q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), ""))
         q.commit()
@@ -258,10 +257,9 @@ def refresh(f, q, wiki_dir, size_map, title, share=False):
     m = MODIFIED_RE.search(re.sub(r"<!--.*?-->", "", body))
     modified = m.group(1) if m else ""
     text, info = html2namu.convert(body, size_map, title)
-    if share:
-        verdict = p2p.audit(q, wiki_dir, title, text, info.get("redirect"), modified)
-        if verdict:
-            log(f"P2P 검증 {({'ok': '통과', 'bad': '거짓 내용 → 피어 차단', 'unknown': '판단 불가'})[verdict]}: {title}")
+    verdict = p2p.audit(q, wiki_dir, title, text, info.get("redirect"), modified)  # P2P·가져오기 문서 검증
+    if verdict:
+        log(f"검증 {({'ok': '통과', 'bad': '거짓 내용 → 차단하고 되돌림', 'unknown': '판단 불가'})[verdict]}: {title}")
     changed = apply(wiki_dir, title, text, info, modified)
     if share and modified:
         p2p.record(q, title, text, info.get("redirect"), modified, "namu")
@@ -302,8 +300,7 @@ def main():
     size_map = json.load(open(args.classmap, encoding="utf-8")).get("size", {})
     log(PRINCIPLE)
     f, q = Fetcher(), open_queue(args.wiki_dir)
-    if args.p2p:
-        p2p.init(q)
+    p2p.init(q)  # P2P 를 꺼도 가져오기로 들어온 문서를 검증하는 데 쓴다
     try:
         if args.doc:
             refresh(f, q, args.wiki_dir, size_map, args.doc, args.p2p)

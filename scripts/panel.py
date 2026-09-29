@@ -502,6 +502,15 @@ def status():
     st["running"]["import"] = alive("import")
     st["import_files"], st["import_dir"] = import_files(), IMPORT_DIR
     st["import_log"] = tail("import.log", 6)
+    st["import_audit"] = {"pending": 0, "ok": 0, "bad": []}
+    try:
+        q = sqlite3.connect(f"file:{os.path.join(WIKI, 'updater.db')}?mode=ro", uri=True, timeout=5)
+        for audited, n in q.execute("select audited, count(*) from shared where src = 'import' group by audited"):
+            st["import_audit"]["ok" if audited else "pending"] = n
+        st["import_audit"]["bad"] = [[k[9:], v] for k, v in q.execute("select k, v from meta where k like 'bad:file:%'")]
+        q.close()
+    except sqlite3.Error:
+        pass
     st["export_range"], st["import_range"] = s.get("export_range", "all"), s.get("import_range", "all")
     try:
         import wiki_pack
@@ -609,7 +618,9 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 <code id="impdir"></code> 폴더에 넣고 고르세요.<br>
 문서마다 내 쪽보다 새 판만 역사 뒤에 이어 붙입니다. 내 쪽이 같거나 더 새로우면 건너뛰고, 지우기는 옮기지 않습니다.
 가져온 판은 역사 요약에 [가져옴 파일이름] 이 붙습니다. <b>위키를 끈 상태에서만</b> 가져옵니다.<br>
-받은 파일의 내용은 검증되지 않습니다(P2P 와 달리 나무위키와 맞춰 보지 않음). 믿을 수 있는 사람에게서 받은 파일만 넣으세요.</p>
+<b>검증</b>: '나무위키 최신판' 이라고 적힌 판은 P2P 처럼 갱신기가 틈틈이 나무위키와 맞춰 봅니다(동기화가 켜져 있을 때).
+하나라도 거짓이면 그 파일에서 가져온 문서를 모두 되돌리고 나무위키에서 다시 받습니다. 직접 편집한 판은 나무위키와 비교할 수 없어 검증하지 않습니다.</p>
+<div id="iaudit" style="font-size:13px"></div>
 <pre id="ilog"></pre></details>
 <details class="sec" id="sec-update" data-default="0"><summary><h2>새 판 알림</h2><span class="sum" id="sum-update"></span></summary>
 <label><input type="checkbox" id="updon" onchange="api('/api/update_notice?on='+(this.checked?1:0)).then(load)"> GitHub 에 새 판이 나오면 알려 주기</label>
@@ -688,6 +699,8 @@ document.getElementById('impdir').textContent=s.import_dir;document.getElementBy
 var il=s.import_log.filter(l=>l.startsWith('진행')||l.startsWith('완료')||l.startsWith('가져온')).pop();
 var ig=s.import_log.filter(l=>l.startsWith('가져온')).pop();
 document.getElementById('iprog').textContent=s.running.import?('가져오는 중 · '+(il||'준비 중…')):(ig||il||'');
+var ia=s.import_audit;document.getElementById('iaudit').innerHTML=(ia.pending||ia.ok?'검증 대기 '+ia.pending+'개 · 확인함 '+ia.ok+'개':'')+
+ia.bad.map(b=>'<div style="color:#c00">거짓 내용이 확인되어 되돌린 파일: <b>'+esc(b[0])+'</b> — '+esc(b[1])+'</div>').join('');
 sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
