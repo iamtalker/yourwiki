@@ -8,3 +8,9 @@ panel.json
 __pycache__/
 *.pyc
 run/
+export/
+update.json
+yourwiki.conf
+yourwiki.conf.tmp
+panel.json.*
+import/

@@ -7,3 +7,8 @@ run/
 *.log
 panel.json
 __pycache__/
+update.json
+yourwiki.conf
+panel.json.*
+import/
+export/

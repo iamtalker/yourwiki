@@ -1,4 +1,4 @@
-"""갱신기: 나무위키에서 바뀐 문서를 예의 바르게 받아 위키를 최신으로 유지한다 (유어위키 1.1).
+"""갱신기: 나무위키에서 바뀐 문서를 예의 바르게 받아 위키를 최신으로 유지한다 (유어위키 1.2).
 
 원칙 (시작할 때 로그 첫 줄에 남긴다)
 - robots.txt 를 지킨다. 시작할 때와 1시간마다 다시 읽고, 필요한 경로가 금지되면 스스로 멈춘다.
@@ -16,6 +16,7 @@ import argparse
 import html as htmlmod
 import json
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -27,6 +28,7 @@ import urllib.robotparser
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import html2namu  # noqa: E402
+import p2p  # noqa: E402
 
 BASE = "https://namu.wiki"
 UA = "YourWiki/1.0 (+https://github.com/iamtalker/yourwiki)"
@@ -42,6 +44,10 @@ LICENSE_URL = "https://creativecommons.org/licenses/by-nc-sa/2.0/kr/"
 
 class Stop(Exception):
     """멈춰야 하는 상황(차단, robots 금지 등)."""
+
+
+class Retry(Exception):
+    """네트워크 문제(끊김, 시간 초과 등). 차단이 아니므로 잠시 뒤 다시 시도한다."""
 
 
 class Forbidden(Exception):
@@ -93,8 +99,13 @@ class Fetcher:
         if self.robots and time.time() - self.robots_at < ROBOTS_EVERY:
             return
         req = urllib.request.Request(BASE + "/robots.txt", headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            txt = r.read().decode("utf-8", "replace")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                txt = r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            raise Stop(f"robots.txt 를 읽지 못함(HTTP {e.code}) → 중단")
+        except (urllib.error.URLError, OSError) as e:
+            raise Retry(f"robots.txt 연결 실패: {getattr(e, 'reason', e)}")
         for path in ("/w/%EB%82%98%EB%AC%B4", "/RecentChanges"):
             if not self.allowed(txt, path):
                 raise Stop(f"robots.txt 가 {path} 를 금지함 → 중단")
@@ -119,6 +130,8 @@ class Fetcher:
                     raise Stop(f"서로 다른 문서에서 연달아 403 → 차단으로 보고 중단 (마지막: {path})")
                 raise Forbidden(path)
             raise Stop(f"HTTP {e.code} ({path}) → 차단 가능성, 중단")
+        except (urllib.error.URLError, OSError) as e:
+            raise Retry(f"연결 실패 ({path}): {getattr(e, 'reason', e)}")
         self.forbidden = 0
         low = body[:20000].lower()
         if any(k in low for k in ("captcha-challenge", "cf-chl", "just a moment", "g-recaptcha\"", "hcaptcha-box")):
@@ -143,15 +156,28 @@ def enqueue(q, title, priority=0, reason=""):
               "priority = max(priority, excluded.priority)", (title, priority, reason, time.time()))
 
 
-def next_title(q):
+def next_title(q, share=False):
+    """다음에 받을 문서. share(P2P)면 같은 우선순위 안에서 순서를 섞어 피어마다 다른 문서를 받게 하고,
+    대기열에 들어온 뒤에 친구나 검증된 ID 가 이미 받은 문서는 건너뛴다(P2P 작업자가 중계소에서 받는다)."""
     now = time.time()
-    for title, in q.execute("select title from queue order by priority desc, added asc").fetchall():
-        row = q.execute("select at from fetched where title = ?", (title,)).fetchone()
-        if row and now - row[0] < COOLDOWN:
-            q.execute("delete from queue where title = ?", (title,))  # 쿨다운 중이면 버린다
-            continue
-        return title
-    return None
+    if random.random() < p2p.AUDIT_SHARE:
+        t = p2p.audit_candidate(q)  # P2P·가져오기로 들어온 문서를 나무위키에서 직접 받아 맞춰 본다(사보타주 검증)
+        if t:
+            return t
+    # 쿨다운 중인 문서는 버린다(같은 문서는 24시간에 한 번)
+    q.execute("delete from queue where exists (select 1 from fetched f where f.title = queue.title and f.at > ?)",
+              (now - COOLDOWN,))
+    if not share:
+        r = q.execute("select title from queue order by priority desc, added asc limit 1").fetchone()
+        return r[0] if r else None
+    # 친구나 검증된 ID 가 대기열에 들어온 뒤에 받은 문서는 건너뛴다(한 번의 질의로, 대기열 전체를 정렬하지 않고)
+    r = q.execute(
+        "select title from queue where not exists ("
+        "  select 1 from hindex i join nodes n on n.id = i.node"
+        "  where i.title = queue.title and i.at >= coalesce(queue.added, 0) - 60 and n.banned = 0"
+        "  and (n.trusted = 1 or (i.conv = ? and n.audits_ok >= ? and n.audits_bad = 0)))"
+        " order by priority desc, random() limit 1", (p2p.conv_id(), p2p.PROBATION)).fetchone()
+    return r[0] if r else None
 
 
 # ---------------------------------------------------------------- 위키 반영
@@ -163,16 +189,17 @@ MODIFIED_RE = re.compile(r"최근 수정 시각\s*:?\s*(?:<[^>]+>\s*)*(\d{4}-\d{
 CAT_RE = re.compile(r"\[\[분류:([^\]|#\n]+)")
 
 
-def footer(title, modified):
+def footer(title, modified, via=""):
     q = urllib.parse.quote(title, safe="")
+    how = "다른 유어위키에서 P2P로 받음" if via else "유어위키 갱신기로 가져옴"
     return ("\n\n----\n"
-            f" * 출처: [[{BASE}/w/{q}|나무위키 「{title}」 문서]] (최근 수정 {modified}, 유어위키 갱신기로 가져옴)\n"
+            f" * 출처: [[{BASE}/w/{q}|나무위키 「{title}」 문서]] (최근 수정 {modified}, {how})\n"
             f" * 라이선스: [[{LICENSE_URL}|CC BY-NC-SA 2.0 KR]] · 저작권은 각 기여자에게 있습니다. "
             f"기여자 목록은 [[{BASE}/history/{q}|원 문서의 역사]]에서 볼 수 있습니다.\n")
 
 
-def apply(wiki_dir, title, text, info, modified):
-    """문서를 새 판으로 올린다. 바뀐 게 없으면 False."""
+def apply(wiki_dir, title, text, info, modified, via=""):
+    """문서를 새 판으로 올린다. 바뀐 게 없으면 False. via 는 P2P 로 받았을 때 그 피어 주소(역사에 남긴다)."""
     db = sqlite3.connect(os.path.join(wiki_dir, "data.db"), timeout=60)
     wt = wiki_title(title)
     last = db.execute("select set_data from data_set where doc_name = ? and set_name = 'last_edit'",
@@ -180,7 +207,7 @@ def apply(wiki_dir, title, text, info, modified):
     if last and modified and last[0][:19] >= modified:
         db.close()
         return False
-    data = text if info.get("redirect") else text.rstrip("\n") + footer(title, modified)
+    data = text if info.get("redirect") else text.rstrip("\n") + footer(title, modified, via)
     exists = db.execute("select 1 from data where title = ?", (wt,)).fetchone()
     if exists:
         db.execute("update data set data = ? where title = ?", (data, wt))
@@ -188,9 +215,10 @@ def apply(wiki_dir, title, text, info, modified):
         db.execute("insert into data (title, data, type) values (?, ?, '')", (wt, data))
     rev = (db.execute("select max(id + 0) from history where title = ?", (wt,)).fetchone()[0] or 0) + 1
     db.execute("insert into history (id, title, data, date, ip, send, leng, hide, type) "
-               "values (?, ?, ?, ?, '유어위키 갱신기', ?, ?, '', ?)",
-               (str(rev), wt, data, time.strftime("%Y-%m-%d %H:%M:%S"),
-                f"나무위키 최신판(수정 {modified})에서 갱신", str(len(data)), "r1" if rev == 1 else ""))
+               "values (?, ?, ?, ?, ?, ?, ?, '', ?)",
+               (str(rev), wt, data, time.strftime("%Y-%m-%d %H:%M:%S"), "유어위키 P2P" if via else "유어위키 갱신기",
+                f"나무위키 최신판(수정 {modified})에서 갱신" + (f" · P2P: {via}" if via else ""),
+                str(len(data)), "r1" if rev == 1 else ""))
     db.execute("delete from data_set where doc_name = ? and set_name in ('last_edit', 'length')", (wt,))
     db.executemany("insert into data_set (doc_name, doc_rev, set_name, set_data) values (?, '', ?, ?)",
                    [(wt, "last_edit", modified or time.strftime("%Y-%m-%d %H:%M:%S")), (wt, "length", str(len(data)))])
@@ -206,10 +234,11 @@ def apply(wiki_dir, title, text, info, modified):
     return True
 
 
-def refresh(f, q, wiki_dir, size_map, title):
+def refresh(f, q, wiki_dir, size_map, title, share=False):
     try:
         body = f.get("/w/" + urllib.parse.quote(title, safe=""))
     except Forbidden:
+        p2p.audit_missing(q, wiki_dir, title, "403")
         q.execute("delete from queue where title = ?", (title,))
         q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), "forbidden"))
         q.commit()
@@ -217,6 +246,8 @@ def refresh(f, q, wiki_dir, size_map, title):
         return
     q.execute("delete from queue where title = ?", (title,))
     if body is None:
+        if p2p.audit_missing(q, wiki_dir, title, "404"):
+            log(f"P2P·가져오기로 들어온 문서인데 나무위키에 없음 → 되돌림: {title}")
         log(f"없음(404): {title}")
         q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), ""))
         q.commit()
@@ -226,7 +257,12 @@ def refresh(f, q, wiki_dir, size_map, title):
     m = MODIFIED_RE.search(re.sub(r"<!--.*?-->", "", body))
     modified = m.group(1) if m else ""
     text, info = html2namu.convert(body, size_map, title)
+    verdict = p2p.audit(q, wiki_dir, title, text, info.get("redirect"), modified)  # P2P·가져오기 문서 검증
+    if verdict:
+        log(f"검증 {({'ok': '통과', 'bad': '거짓 내용 → 차단하고 되돌림', 'unknown': '판단 불가'})[verdict]}: {title}")
     changed = apply(wiki_dir, title, text, info, modified)
+    if share and modified:
+        p2p.record(q, title, text, info.get("redirect"), modified, "namu")
     q.execute("create table if not exists result (title text primary key, at real, changed int)")
     q.execute("insert or replace into result values (?, ?, ?)", (title, time.time(), int(changed)))
     q.execute("insert or replace into fetched values (?, ?, ?)", (title, time.time(), modified))
@@ -257,31 +293,43 @@ def main():
     ap.add_argument("--watch", action="store_true")
     ap.add_argument("--queue-only", action="store_true",
                     help="최근 변경은 따라가지 않고 대기열(갱신 단추로 요청한 문서)만 처리")
+    ap.add_argument("--p2p", action="store_true", help="받은 문서를 다른 유어위키와 나눈다(p2p.py 와 함께)")
     ap.add_argument("--classmap", default=os.path.join(os.path.dirname(__file__), "..", "assets", "classmap.json"))
     args = ap.parse_args()
 
     size_map = json.load(open(args.classmap, encoding="utf-8")).get("size", {})
     log(PRINCIPLE)
     f, q = Fetcher(), open_queue(args.wiki_dir)
+    p2p.init(q)  # P2P 를 꺼도 가져오기로 들어온 문서를 검증하는 데 쓴다
     try:
         if args.doc:
-            refresh(f, q, args.wiki_dir, size_map, args.doc)
+            refresh(f, q, args.wiki_dir, size_map, args.doc, args.p2p)
             return
         if not args.watch:
             ap.error("--doc 또는 --watch 가 필요합니다")
-        last_rc = 0.0
+        last_rc, fails = 0.0, 0
         while True:
-            if not args.queue_only and time.time() - last_rc > RC_EVERY:
-                poll_recent(f, q)
-                last_rc = time.time()
-            title = next_title(q)
-            if title:
-                refresh(f, q, args.wiki_dir, size_map, title)
-            else:
-                time.sleep(10)
+            try:
+                if not args.queue_only and time.time() - last_rc > RC_EVERY:
+                    poll_recent(f, q)
+                    last_rc = time.time()
+                title = next_title(q, args.p2p)
+                if title:
+                    refresh(f, q, args.wiki_dir, size_map, title, args.p2p)
+                else:
+                    time.sleep(10)
+                fails = 0
+            except Retry as e:
+                fails += 1
+                wait = min(1800, 30 * 2 ** min(fails, 6))
+                log(f"{e} → {wait}초 뒤 다시 시도 (인터넷 연결을 확인하세요)")
+                time.sleep(wait)
     except Stop as e:
         log(f"중단: {e}")
         sys.exit(2)
+    except Retry as e:
+        log(f"연결 실패: {e}")
+        sys.exit(1)
     except KeyboardInterrupt:
         log("사용자가 멈춤")
 

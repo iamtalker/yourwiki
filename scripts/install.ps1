@@ -120,7 +120,8 @@ $count = & $python -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).ex
 if ([int]$count -gt 0 -and -not $Reimport) {
     Write-Host "  이미 $count 개 문서가 있습니다. 다시 변환하려면 -Reimport 로 실행하세요."
 } else {
-    & $python (Join-Path $PSScriptRoot 'import_dump.py') $dump $Wiki --7z $sevenZip --dump-date $d.date
+    $expected = if ($d.docs) { $d.docs } else { 0 }
+    & $python (Join-Path $PSScriptRoot 'import_dump.py') $dump $Wiki --7z $sevenZip --dump-date $d.date --expected $expected
     if ($LASTEXITCODE -ne 0) { throw '변환에 실패했습니다.' }
 }
 

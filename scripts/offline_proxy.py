@@ -21,6 +21,7 @@ import os
 import re
 import socketserver
 import sqlite3
+import sys
 import time
 import urllib.parse
 
@@ -125,10 +126,23 @@ def theme_css():
                          f"button.search_button:hover{{background:{darker(color)}!important}}"
                          f".kit-random{{background:{color}!important}}.kit-random:hover{{background:{darker(color)}!important}}"
                          f"#nav_bar a:hover{{background-color:{darker(color)}!important}}"
-                         "</style>")
+                         + MOBILE_CSS + "</style>")
         _theme["mtime"] = mtime
     return _theme["css"]
 
+
+# 휴대폰(좁은 화면): 검색줄을 한 줄로, 넓은 표는 옆으로 밀어 보기, 떠 있는 단추는 아이콘만, 아래쪽 여백
+MOBILE_CSS = (
+    ".table_safe{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}"
+    "@media (max-width:720px){"
+    "form.only_mobile{display:flex!important;align-items:center;gap:4px;flex-wrap:nowrap;padding:4px 8px;box-sizing:border-box}"
+    "form.only_mobile input.search{flex:1 1 auto;min-width:0;width:auto!important;margin:0!important}"
+    "form.only_mobile .search_button,form.only_mobile .kit-random{flex:0 0 auto;margin:0!important}"
+    ".table_safe td,.table_safe th{word-break:keep-all;min-width:3.5em}"
+    ".kit-refresh .kit-label,.kit-badge .kit-label{display:none}"
+    ".kit-refresh,.kit-badge{padding:8px 10px!important;left:8px!important;bottom:8px!important}"
+    "body{padding-bottom:56px}"
+    "}")
 
 LAYOUT_JS = """<script>(function(){
 /* 목록·도구·사용자 메뉴를 오른쪽에서 왼쪽 로고(유어위키) 옆으로 옮긴다. 검색창은 오른쪽에 둔다. */
@@ -189,15 +203,15 @@ def refresh_button(body, path, queue_db=""):
         badge = ('<span class="kit-badge" title="24시간 안에 나무위키에서 확인한 문서입니다" '
                  'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;color:#fff;'
                  'font-size:13px;padding:7px 12px;border-radius:18px;box-shadow:0 2px 6px rgba(0,0,0,.25)">'
-                 f'✔ 최신 버전 ({"오늘 " if ":" in when and "/" not in when else ""}{when} 확인)</span>')
+                 f'✔<span class="kit-label"> 최신 버전 ({"오늘 " if ":" in when and "/" not in when else ""}{when} 확인)</span></span>')
         m = re.search(r"<body[^>]*>", body)
         return body[:m.end()] + badge + body[m.end():] if m else body
     # 화면 왼쪽 아래에 떠 있게 한다. 문서 안에 넓은 표가 있으면 오른쪽 끝에 붙인 단추가 화면 밖으로 밀려나기 때문.
-    btn = ('<a href="/_kit/refresh?title=' + urllib.parse.quote(title) + '" rel="nofollow" '
+    btn = ('<a class="kit-refresh" href="/_kit/refresh?title=' + urllib.parse.quote(title) + '" rel="nofollow" '
            'title="이 문서를 나무위키 최신판으로 갱신" '
            'style="position:fixed;left:12px;bottom:12px;z-index:2147483000;background:#2a7;color:#fff;'
            'font-size:13px;padding:7px 12px;border-radius:18px;text-decoration:none;'
-           'box-shadow:0 2px 6px rgba(0,0,0,.25)">🔄 나무위키 최신판으로 갱신</a>')
+           'box-shadow:0 2px 6px rgba(0,0,0,.25)">🔄<span class="kit-label"> 나무위키 최신판으로 갱신</span></a>')
     m = re.search(r"<body[^>]*>", body)
     return body[:m.end()] + btn + body[m.end():] if m else body
 
@@ -207,6 +221,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     upstream = ("127.0.0.1", 3001)
     cdn_dir = ""
     queue_db = ""
+    hub = False
 
     COOLDOWN = 24 * 3600
 
@@ -308,7 +323,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _hub(self):
+        """중계소(/_hub/, hub.py 참고): 유어위키들이 보낸 서명된 문서 묶음을 모아 나눠 준다. JSON 만 주고받는다."""
+        import hub
+        u = urllib.parse.urlsplit(self.path)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > 64 << 20:
+            self.send_error(400 if length < 0 else 413)
+            return
+        body = self.rfile.read(length) if length else b""
+        code, obj = hub.handle(hub.db_path_for(self.queue_db), self.command, u.path,
+                               urllib.parse.parse_qs(u.query), body)
+        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
     def _proxy(self):
+        if self.path.startswith("/_hub/") and self.hub and self.queue_db:
+            return self._hub()
         if self.path.startswith("/_kit/cdn/"):
             return self._serve_cdn()
         if self.path.startswith("/_kit/suggest") and self.queue_db:
@@ -317,7 +357,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._refresh_status()
         if self.path.startswith("/_kit/refresh") and self.queue_db:
             return self._refresh()
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0:
+            self.send_error(400)
+            return
         body = self.rfile.read(length) if length else None
         headers = {k: v for k, v in self.headers.items()
                    if k.lower() not in ("host", "accept-encoding", "connection")}
@@ -374,7 +420,11 @@ def main():
     ap.add_argument("--listen", default="127.0.0.1:3000")
     ap.add_argument("--upstream", default="127.0.0.1:3001")
     ap.add_argument("--queue-db", default="", help="갱신 대기열(wiki/updater.db). 주면 갱신 단추가 생긴다")
+    ap.add_argument("--hub", action="store_true", help="중계소를 연다(/_hub/, 고정 주소가 있는 서버에서만 의미 있음)")
     args = ap.parse_args()
+    Handler.hub = args.hub
+    if args.hub:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     host, port = args.listen.rsplit(":", 1)
     uhost, uport = args.upstream.rsplit(":", 1)
     Handler.upstream = (uhost, int(uport))
