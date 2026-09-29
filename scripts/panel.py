@@ -34,15 +34,41 @@ lock = threading.Lock()
 _cache = {}
 
 
+DEFAULTS = {"sync": "auto", "listen": "127.0.0.1:3000", "color": "#3b5bdb"}
+
+
 def settings():
-    try:
-        return json.load(open(SETTINGS, encoding="utf-8"))
-    except Exception:
-        return {"sync": "auto", "listen": "127.0.0.1:3000", "color": "#3b5bdb"}
+    """관리판에서 고른 설정(panel.json). 관리판을 껐다 켜도 그대로 남는다.
+    wiki_on·public 은 '켜 둔 상태'도 기억해 두었다가 다음에 관리판을 열면 다시 켠다."""
+    for path in (SETTINGS, SETTINGS + ".bak"):  # 본 파일이 깨졌으면 직전 판으로
+        try:
+            s = json.load(open(path, encoding="utf-8"))
+            if isinstance(s, dict):
+                return dict(DEFAULTS, **s)
+        except Exception:
+            pass
+    return dict(DEFAULTS)
 
 
 def save_settings(s):
-    json.dump(s, open(SETTINGS, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    """저장 도중 꺼져도 설정이 날아가지 않게: 임시 파일에 다 쓴 뒤 바꿔 끼우고, 직전 판은 .bak 으로 둔다."""
+    tmp = SETTINGS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    if os.path.exists(SETTINGS):
+        try:
+            shutil.copyfile(SETTINGS, SETTINGS + ".bak")
+        except OSError:
+            pass
+    os.replace(tmp, SETTINGS)
+
+
+def remember(**kv):
+    s = settings()
+    s.update(kv)
+    save_settings(s)
 
 
 def alive(name):
@@ -127,7 +153,7 @@ def start_proxy():
     spawn("proxy", args, "proxy.log")
 
 
-def start_wiki():
+def start_wiki(open_browser=True):
     with lock:
         if not os.path.exists(os.path.join(WIKI, "data.db")):
             return "아직 설치되지 않았습니다"
@@ -140,10 +166,13 @@ def start_wiki():
         if not alive("p2p"):
             start_p2p()
 
-    def open_when_ready():  # 엔진이 준비되면 첫 화면을 브라우저로 연다
+    def open_when_ready():  # 엔진이 준비되면 첫 화면을 브라우저로 열고, 공개를 켜 두었으면 다시 공개한다
         for _ in range(600):
             if port_open(3001):
-                webbrowser.open("http://" + settings()["listen"].replace("0.0.0.0", "127.0.0.1") + "/")
+                if open_browser:
+                    webbrowser.open("http://" + settings()["listen"].replace("0.0.0.0", "127.0.0.1") + "/")
+                if settings().get("public") and not alive("tunnel"):
+                    tunnel(True)
                 return
             time.sleep(1)
     threading.Thread(target=open_when_ready, daemon=True).start()
@@ -381,17 +410,22 @@ def status():
           "color": s.get("color", "#3b5bdb"),
           "running": {n: alive(n) for n in ("engine", "proxy", "updater", "install")}}
     st["ready"] = st["running"]["engine"] and port_open(3001)
-    # 위키 엔진이 켜져 있을 때는 data.db 를 열지 않는다.
+    # 위키 엔진이 '켜지는 중'에는 data.db 를 열지 않는다.
     # (엔진이 시작할 때 DB 방식을 바꾸는 동안 다른 연결이 있으면 계속 기다리며 켜지지 않는다)
-    if st["installed"] and not st["running"]["engine"] and not st["running"]["install"]:
+    # 꺼져 있거나 준비가 끝난 뒤에는 읽는다(준비 뒤에는 1분에 한 번). 마지막으로 읽은 수는 기억해 둔다.
+    starting = st["running"]["engine"] and not st["ready"]
+    if (st["installed"] and not starting and not st["running"]["install"]
+            and (not st["ready"] or time.time() - _cache.get("docs_at", 0) > 60)):
         try:
-            db = sqlite3.connect(f"file:{os.path.join(WIKI, 'data.db')}?mode=ro", uri=True, timeout=5)
+            db = sqlite3.connect(f"file:{os.path.join(WIKI, 'data.db')}?mode=ro", uri=True, timeout=1)
             r = db.execute("select data from other where name = 'count_all_title'").fetchone()
-            _cache["docs"] = int(r[0]) if r else None
             db.close()
+            _cache["docs"], _cache["docs_at"] = (int(r[0]) if r else None), time.time()
+            if _cache["docs"] is not None and s.get("docs") != _cache["docs"]:
+                remember(docs=_cache["docs"])
         except Exception:
             pass
-    st["docs"] = _cache.get("docs")
+    st["docs"] = _cache.get("docs", s.get("docs"))
     try:
         q = sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5)
         st["queue"] = q.execute("select count(*) from queue").fetchone()[0]
@@ -486,7 +520,7 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <details class="sec" id="sec-pub" data-default="0"><summary><h2>인터넷에 공개</h2><span class="sum" id="sum-pub"></span></summary>
 <button onclick="pub(1)">공개하기</button><button onclick="act2('tunnel?on=0')">공개 끄기</button>
 <div id="pubinfo" style="margin:6px 0;font-weight:bold"></div>
-<p style="font-size:13px;color:#555">공유기 설정 없이 Cloudflare 임시 공개 주소(https)를 만듭니다. 켤 때마다 주소가 바뀝니다.<br>
+<p style="font-size:13px;color:#555">공유기 설정 없이 Cloudflare 임시 공개 주소(https)를 만듭니다. 켤 때마다 주소가 바뀝니다. [공개 끄기]를 누르기 전까지는 위키를 켤 때마다 다시 공개됩니다.<br>
 <b>공개 전에</b>: 위키에서 먼저 가입해 관리자가 되고, 관리자 설정 → 권한에서 비로그인(ip) 사용자의 편집을 막으세요.
 공개하는 순간 그 사이트의 운영 책임(권리 침해·게시중단 요청 대응 등)은 공개한 사람에게 있습니다.</p></details>
 <details class="sec" id="sec-export" data-default="0"><summary><h2>다른 위키로 내보내기</h2><span class="sum" id="sum-export"></span></summary>
@@ -599,8 +633,10 @@ class Handler(BaseHTTPRequestHandler):
         u = urlsplit(self.path)
         q = parse_qs(u.query)
         if u.path == "/api/start":
+            remember(wiki_on=True)
             msg = start_wiki()
         elif u.path == "/api/stop":
+            remember(wiki_on=False)
             msg = stop_wiki()
         elif u.path == "/api/color":
             import re
@@ -613,7 +649,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 msg = "색 형식이 올바르지 않습니다"
         elif u.path == "/api/tunnel":
-            msg = tunnel((q.get("on") or ["1"])[0] == "1")
+            on = (q.get("on") or ["1"])[0] == "1"
+            msg = tunnel(on)
+            if not on or "시작" in msg or "이미" in msg:
+                remember(public=on)
         elif u.path == "/api/install":
             msg = run_install((q.get("edition") or ["2026"])[0])
         elif u.path == "/api/p2p":
@@ -677,6 +716,12 @@ def main():
     url = f"http://127.0.0.1:{PANEL_PORT}/"
     print(f"유어위키 관리판: {url}  (끌 때는 관리판에서 [끄기]를 누르세요)", flush=True)
     webbrowser.open(url)
+    # 지난번에 위키를 켜 둔 채로 끝냈으면 다시 켠다(끄기를 누른 경우만 꺼진 채로 둔다)
+    s = settings()
+    if s.get("wiki_on") and os.path.exists(os.path.join(WIKI, "data.db")):
+        print("지난번 설정대로 위키를 다시 켭니다" + (" (공개 포함, 주소는 새로 바뀝니다)" if s.get("public") else ""),
+              flush=True)
+        start_wiki(open_browser=False)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -12,10 +12,28 @@
 #            P2P_HUBS: 중계소 주소(선택, 쉼표로 구분)
 #            UPDATE_NOTICE(on|off, 기본 on): GitHub 에 새 판이 나왔는지 켤 때 알려 주기(알리기만 함)
 #            HUB(on|off, 기본 off): 이 서버를 중계소로도 연다(/_hub/, 고정 도메인 + HTTPS 뒤에서)
+# 한 번 준 값은 yourwiki.conf 에 기억되어 다음에 그냥 start 해도 그대로 쓴다. 바꾸려면 새 값을 주고 start.
+#   예) P2P=on bash server/yourwiki.sh start   → 다음부터 bash server/yourwiki.sh start 만 해도 P2P 켜짐
 # HTTPS 는 nginx·Caddy 같은 역방향 프록시를 3000번 앞에 두세요.
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$KIT"
+CONF="$KIT/yourwiki.conf"
+VARS=(LISTEN SYNC P2P P2P_FRIENDS P2P_URL P2P_HUBS UPDATE_NOTICE HUB)
+# 기억해 둔 설정 읽기(이번에 직접 준 값이 우선). source 하지 않고 KEY=값 줄만 읽는다
+if [ -f "$CONF" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    k=${line%%=*}; v=${line#*=}
+    case " ${VARS[*]} " in *" $k "*) ;; *) continue ;; esac
+    [ -n "${!k+x}" ] || printf -v "$k" '%s' "$v"
+  done < "$CONF"
+fi
+save_conf() {
+  local k tmp="$CONF.tmp"
+  : > "$tmp"
+  for k in "${VARS[@]}"; do [ -n "${!k+x}" ] && printf '%s=%s\n' "$k" "${!k}" >> "$tmp"; done
+  mv -f "$tmp" "$CONF"
+}
 LISTEN="${LISTEN:-0.0.0.0:3000}"
 SYNC="${SYNC:-auto}"
 P2P="${P2P:-off}"
@@ -31,6 +49,7 @@ launch() { # 이름 로그 명령...
 case "${1:-}" in
   start)
     [ -f wiki/data.db ] || { echo "아직 설치되지 않았습니다: bash server/install.sh"; exit 1; }
+    save_conf || echo "설정을 yourwiki.conf 에 기억하지 못했습니다(권한 확인)"
     (cd wiki && launch engine server.log ./main.bin 3001 --localhost)
     export PYTHONUTF8=1
     P2P_ARGS=(); HUB_ARGS=()
@@ -81,6 +100,7 @@ case "${1:-}" in
   install-service)
     [ "$(id -u)" = 0 ] || { echo "sudo 로 실행하세요"; exit 1; }
     USER_NAME="${SUDO_USER:-root}"
+    save_conf && chown "$USER_NAME" "$CONF"   # 설정은 yourwiki.conf 에서 읽으므로 서비스 파일에 박지 않는다
     cat >/etc/systemd/system/yourwiki.service <<UNIT
 [Unit]
 Description=YourWiki (나무위키 글을 담은 위키)
@@ -89,7 +109,6 @@ After=network-online.target
 [Service]
 Type=forking
 User=$USER_NAME
-Environment=LISTEN=$LISTEN SYNC=$SYNC P2P=$P2P HUB=${HUB:-off} "P2P_HUBS=${P2P_HUBS:-}" "P2P_FRIENDS=${P2P_FRIENDS:-}" "P2P_URL=${P2P_URL:-}"
 ExecStart=/usr/bin/env bash $KIT/server/yourwiki.sh start
 ExecStop=/usr/bin/env bash $KIT/server/yourwiki.sh stop
 RemainAfterExit=yes
@@ -101,6 +120,6 @@ UNIT
     echo "등록했습니다: systemctl status yourwiki"
     ;;
   *)
-    sed -n '2,9p' "$0"
+    sed -n '2,17p' "$0"
     ;;
 esac

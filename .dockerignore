@@ -8,3 +8,5 @@ run/
 panel.json
 __pycache__/
 update.json
+yourwiki.conf
+panel.json.*

@@ -10,3 +10,6 @@ __pycache__/
 run/
 export/
 update.json
+yourwiki.conf
+yourwiki.conf.tmp
+panel.json.*
