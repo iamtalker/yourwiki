@@ -8,14 +8,16 @@
   주소가 아니라 ID 로 구별하므로 주소가 바뀌어도 상관없고, 친구는 ID 로 한 번만 등록하면 된다.
 - 서버 없음(기본): 각 위키가 작은 읽기 전용 창구(hub_server.py --read-only, wiki/hub.db)를 열고,
   자기가 나무위키에서 받은 문서를 서명해 거기 둔다. 창구는 P2P 전용 임시 공개 주소(cloudflared)로 연다.
-  '내 ID → 지금 창구 주소'는 BitTorrent 공용 연결망(DHT, dht.py)에 서명해 올려 두므로, 친구는 ID 만 알면
-  주소가 바뀌어도 찾아온다. 올릴 때 내가 아는 다른 ID 몇 개도 함께 적어, 친구의 친구도 찾아갈 수 있다.
+  '내 ID → 지금 창구 주소'는 BitTorrent 공용 연결망(DHT, dht.py)에 서명해 올려 두므로 주소가 바뀌어도 찾아온다.
+  서로 모르는 위키끼리는 DHT 의 '유어위키 게시판'(모두가 같은 열쇠로 읽고 쓰는 공용 칸)에 ID 를 적고 읽어 찾는다.
+  친구를 적을 필요는 없다(BitTorrent 처럼 켜 두면 서로 찾는다). 올릴 때 아는 다른 ID 도 함께 적어 퍼지게 한다.
   받아서 서명을 확인한 남의 묶음도 내 창구에 두어 다시 나눠 준다(원래 위키가 꺼져 있어도 퍼지도록).
 - 중계소(선택): 누군가 고정 주소 서버에 중계소(hub.py)를 띄우면 거기로도 보내고 받는다. 없어도 된다.
 - 서명과 해시 때문에 중간에 거친 창구·중계소는 내용을 바꾸지 못한다(할 수 있는 건 '안 전하기'뿐).
 
 누구를 믿나 (사보타주 방지)
-- 등급: 친구(내가 적은 ID) > 검증된 ID(나무위키와 직접 맞춰 본 검증을 5건 넘게 통과, 거짓 0건) > 수습 ID(그 밖).
+- 등급: 친구(선택, 내가 적은 ID) > 검증된 ID(나무위키와 직접 맞춰 본 검증을 5건 넘게 통과, 거짓 0건) > 수습 ID(그 밖).
+  모르는 위키에게서도 자동으로 받되, 수습 한도 안에서만 받고 검증을 통과하면 한도가 풀린다.
 - 믿음은 '검증을 통과한 실적'으로만 쌓인다. 주소나 ID 를 새로 만들면 실적이 0 으로 돌아가므로,
   차단된 공격자가 새 ID 로 돌아와도 처음부터 다시 정직하게 일해야 한다.
 - 수습 ID 들에게서는 '모두 합쳐' 한 시간에 200개까지만 받는다. ID 를 1,000개 만들어도 오염될 수 있는 양은 그대로다.
@@ -67,6 +69,10 @@ DHT_EVERY = 1800         # 내 주소를 DHT 에 다시 올리는 주기(항목�
 RESOLVE_EVERY = 1800     # 한 ID 의 주소를 다시 찾는 주기
 MAX_RESOLVE = 30         # 한 번에 주소를 찾는 ID 수
 PEX_SHARE = 20           # 내 DHT 기록에 함께 적는 다른 ID 수
+BOARD_WRITE_EVERY = 1800 # 게시판에 내 ID 를 적는 주기
+BOARD_READ_EVERY = 600   # 게시판을 읽는 주기
+BOARD_READ_SLOTS = 8     # 한 번에 읽는 칸 수(8칸 모두)
+FORGET_MISSES = 8        # 이만큼 연달아 주소를 못 찾은 모르는 ID 는 잊는다(가짜 ID 도배 대비)
 FETCH_TRIES = 3          # 본문을 이만큼 못 받으면 새 판이 올라올 때까지 그 사본은 건너뛴다
 PEER_FAILS = 10          # 이만큼 연달아 실패하면 주소를 잊고 다시 찾는다
 TIER_NAMES = {"friend": "친구", "proven": "검증된 ID", "probation": "수습 ID"}
@@ -153,13 +159,14 @@ def init(q):
         create index if not exists hindex_title on hindex(title);
         create table if not exists p2p_backup (title text primary key, data text, last_edit text, at real, node text);
         create table if not exists peers (node text primary key, url text, cursor int default 0, last_ok real default 0,
-                                          fails int default 0, resolved real default 0);
+                                          fails int default 0, resolved real default 0, misses int default 0);
         create table if not exists meta (k text primary key, v text);
     """)
     for table, col in (("shared", "node text default ''"), ("shared", "conv text default ''"),
                        ("shared", "audited int default 0"), ("shared", "tier text default ''"),
                        ("hindex", "seen real default 0"), ("hindex", "tries int default 0"),
-                       ("nodes", "strikes int default 0")):
+                       ("nodes", "strikes int default 0"), ("peers", "misses int default 0"),
+                       ("nodes", "via text default ''")):
         try:
             q.execute(f"alter table {table} add column {col}")
         except sqlite3.OperationalError:
@@ -234,6 +241,8 @@ def public_url_ok(url, resolve=True):
     """모르는 ID 가 알려 준 주소는 https 이고 사설·내부 주소가 아니어야 한다(내 공유기·내부망을 찌르지 않게)."""
     import ipaddress
     import socket
+    if os.environ.get("YOURWIKI_P2P_ALLOW_LOCAL"):  # 시험용(한 컴퓨터에서 여러 위키)
+        return True
     u = urllib.parse.urlsplit(url)
     if u.scheme != "https" or not u.hostname or u.hostname == "localhost":
         return False
@@ -363,8 +372,8 @@ class Worker:
         now = time.time()
         cand = [r[0] for r in self.q.execute(
             "select n.id from nodes n left join peers p on p.node = n.id where n.banned = 0 and n.id != ? "
-            "and coalesce(p.resolved, 0) < ? order by n.trusted desc, n.audits_ok desc, coalesce(p.resolved, 0) "
-            "limit ?", (self.me, now - RESOLVE_EVERY, MAX_RESOLVE))]
+            "and coalesce(p.resolved, 0) < ? order by n.trusted desc, n.audits_ok desc, (n.via = 'pex') desc, "
+            "coalesce(p.resolved, 0) limit ?", (self.me, now - RESOLVE_EVERY, MAX_RESOLVE))]
         found = 0
         for node in cand:
             self.q.execute("insert into peers (node, resolved) values (?, ?) on conflict(node) do update set "
@@ -375,9 +384,18 @@ class Worker:
                 log(f"DHT 찾기 실패: {e}")
                 break
             if not r or not isinstance(r[1], dict):
-                # 못 찾음(아직 안 켰거나 방금 켬) → 30분이 아니라 5분 뒤에 다시 찾는다
-                self.q.execute("update peers set resolved = ? where node = ?", (now - RESOLVE_EVERY + 300, node))
+                # 못 찾음(아직 안 켰거나 꺼져 있거나 가짜 ID) → 5분, 10분, 20분… 하루까지 늘려 가며 다시 찾는다
+                self.q.execute("update peers set misses = misses + 1 where node = ?", (node,))
+                misses = self.q.execute("select misses from peers where node = ?", (node,)).fetchone()[0]
+                self.q.execute("update peers set resolved = ? where node = ?",
+                               (now - RESOLVE_EVERY + min(86400, 300 * 2 ** (misses - 1)), node))
+                trusted = self.q.execute("select trusted, audits_ok from nodes where id = ?", (node,)).fetchone()
+                if misses >= FORGET_MISSES and not trusted[0] and not trusted[1] and not self.q.execute(
+                        "select 1 from hindex where node = ? limit 1", (node,)).fetchone():
+                    self.q.execute("delete from peers where node = ?", (node,))
+                    self.q.execute("delete from nodes where id = ?", (node,))
                 continue
+            self.q.execute("update peers set misses = 0 where node = ?", (node,))
             v = r[1]
             url = norm_url((v.get(b"u") or b"").decode("utf-8", "replace"))
             trusted = self.q.execute("select trusted from nodes where id = ?", (node,)).fetchone()[0]
@@ -387,11 +405,38 @@ class Worker:
                 found += 1
                 if old != url:
                     log(f"ID {node[:12]}… 의 주소를 찾았습니다: {url}")
-            for other in dht.unpack_ids(v.get(b"p") or b"")[:PEX_SHARE]:  # 친구의 친구
+            for other in dht.unpack_ids(v.get(b"p") or b"")[:PEX_SHARE]:
+                # 실제로 응답한 위키가 '최근에 주고받은 위키'라고 적은 ID 라 게시판의 ID 보다 먼저 찾아본다
                 if other != self.me:
-                    self.q.execute("insert or ignore into nodes (id, first_seen) values (?, ?)", (other, now))
+                    self.q.execute("insert into nodes (id, first_seen, via) values (?, ?, 'pex') on conflict(id) do update "
+                                   "set via = 'pex' where nodes.via != 'pex'", (other, now))
         self.q.commit()
         return found
+
+    def board(self):
+        """유어위키 게시판(dht.py): 가끔 아무 칸에 내 ID 를 적고, 다른 칸들을 읽어 모르는 위키를 알아낸다.
+        친구를 적지 않아도 켜 두면 서로 찾는다(BitTorrent 처럼)."""
+        if not self.use_dht:
+            return 0
+        import random
+        import dht
+        now = time.time()
+        if self.my_url() and now - float(get_meta(self.q, "board_w", "0") or 0) > BOARD_WRITE_EVERY:
+            slot = random.randrange(dht.BOARD_SLOTS)
+            ok, _ = dht.board_add(self.dht(), slot, self.me)
+            set_meta(self.q, "board_w", now if ok else now - BOARD_WRITE_EVERY + 300)
+        new = 0
+        if now - float(get_meta(self.q, "board_r", "0") or 0) > BOARD_READ_EVERY:
+            for slot in random.sample(range(dht.BOARD_SLOTS), BOARD_READ_SLOTS):
+                for other in dht.board_read(self.dht(), slot)[1]:
+                    if other != self.me and HEX64.match(other):
+                        new += self.q.execute("insert or ignore into nodes (id, first_seen, via) values (?, ?, 'board')",
+                                              (other, now)).rowcount
+            set_meta(self.q, "board_r", now)
+        self.q.commit()
+        if new:
+            log(f"유어위키 게시판에서 새 위키 {new}곳을 알아냈습니다")
+        return new
 
     # -- 보내기: 내가 나무위키에서 직접 받은 문서만 서명해서 보낸다
     def push(self, hub):
@@ -572,6 +617,7 @@ class Worker:
             log(f"내 창구에 새 문서 {n}개를 올렸습니다")
         try:
             self.dht_publish()
+            self.board()
             self.dht_resolve()
         except OSError as e:
             log(f"DHT 오류: {e}")
@@ -630,8 +676,8 @@ class Worker:
         friends = self.q.execute("select count(*) from nodes where trusted = 1").fetchone()[0]
         log(f"P2P 시작 · 내 ID {self.me} · 친구 {friends}명 · 중계소 {len(hubs)}곳(선택) · "
             f"공용 연결망(DHT) {'사용' if self.use_dht else '끔'}")
-        if not friends and not hubs:
-            log("친구 ID 를 관리판에 적으면 서로 찾아 문서를 나눕니다(친구의 친구도 차례로 찾아갑니다).")
+        if not self.use_dht and not hubs:
+            log("공용 연결망(DHT)도 중계소도 없어 다른 위키를 찾을 수 없습니다.")
         while True:
             done = self.round()
             time.sleep(5 if done else SYNC_EVERY)

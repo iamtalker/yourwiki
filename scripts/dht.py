@@ -152,7 +152,7 @@ class DHT:
             out[addr] = r
         return out
 
-    def _lookup(self, target):
+    def _lookup(self, target, salt=SALT):
         """target 에 가까운 노드들을 찾아가며 get 을 보낸다. (가장 새 값, 가까운 노드들의 토큰) 을 돌려준다."""
         seen, asked = {}, set()
         for addr in self._boot_addrs():
@@ -182,7 +182,7 @@ class DHT:
                     seen.setdefault(naddr, nid)
                 v, k, sig, seq = a.get(b"v"), a.get(b"k"), a.get(b"sig"), a.get(b"seq")
                 if v is not None and isinstance(k, bytes) and isinstance(sig, bytes) and isinstance(seq, int):
-                    if target_of(k) == target and ed25519.verify(k, sign_buffer(v, seq), sig):
+                    if target_of(k, salt) == target and ed25519.verify(k, sign_buffer(v, seq, salt), sig):
                         if best is None or seq > best[0]:
                             best = (seq, v)
             # 가장 가까운 K 개를 모두 물어봤으면 끝
@@ -192,27 +192,56 @@ class DHT:
         closest = sorted((a for a in tokens if seen.get(a)), key=lambda a: xor(seen[a], target))[:K]
         return best, {a: tokens[a] for a in closest}
 
-    def get(self, pub):
+    def get(self, pub, salt=SALT):
         """ID(공개 열쇠 32바이트)가 올린 값. (seq, 값) 또는 None."""
-        best, _ = self._lookup(target_of(pub))
+        best, _ = self._lookup(target_of(pub, salt), salt)
         return best
 
-    def put(self, secret, pub, value, seq):
+    def put(self, secret, pub, value, seq, salt=SALT):
         """내 값을 올린다. 올리는 데 성공한 노드 수를 돌려준다."""
         v = value
         if len(bencode(v)) > 1000:
             raise ValueError("DHT 값은 1000바이트를 넘을 수 없음")
-        target = target_of(pub)
-        best, tokens = self._lookup(target)
+        target = target_of(pub, salt)
+        best, tokens = self._lookup(target, salt)
         if best and best[0] >= seq:
             seq = best[0] + 1
-        sig = ed25519.sign(secret, sign_buffer(v, seq))
+        sig = ed25519.sign(secret, sign_buffer(v, seq, salt))
         ok = 0
         for addr, token in tokens.items():
-            r = self._ask([addr], "put", {"token": token, "v": v, "k": pub, "salt": SALT, "seq": seq, "sig": sig})
+            r = self._ask([addr], "put", {"token": token, "v": v, "k": pub, "salt": salt, "seq": seq, "sig": sig})
             if r.get(addr, {}).get(b"y") == b"r":
                 ok += 1
         return ok, seq
+
+
+# ---------------------------------------------------------------- 유어위키 게시판 (서로 모르는 위키끼리 찾기)
+# 모든 유어위키가 같은 열쇠를 쓰는 공용 칸 8개(최근 쓴 위키 200곳). 열쇠가 공개되어 있어 누구나 읽고 쓸 수 있다.
+# 각 위키는 가끔 아무 칸에 자기 ID 를 적고, 다른 칸들을 읽어 모르는 위키의 ID 를 알아낸다.
+# 칸에 적힌 것은 ID 뿐이고, 그 ID 의 주소는 그 ID 가 자기 열쇠로 서명해 올린 기록에서만 얻으므로
+# 누가 칸을 가짜로 채워도 남의 주소를 속일 수는 없다(찾기가 조금 느려질 뿐).
+BOARD_SECRET = hashlib.sha256(b"yourwiki-p2p-board-v1").digest()
+BOARD_PUB = ed25519.public_key(BOARD_SECRET)
+BOARD_SLOTS = 8
+BOARD_PER_SLOT = 25     # 32바이트 ID 25개 = 800바이트 (값 한도 1000바이트)
+
+
+def board_salt(i):
+    return b"yourwiki-board-%02d" % i
+
+
+def board_read(d, slot):
+    r = d.get(BOARD_PUB, board_salt(slot))
+    if not r or not isinstance(r[1], dict):
+        return 0, []
+    return r[0], unpack_ids(r[1].get(b"n") or b"")
+
+
+def board_add(d, slot, my_id):
+    """그 칸에 내 ID 를 맨 앞에 적는다(이미 있으면 앞으로). 오래된 것부터 밀려난다."""
+    seq, ids = board_read(d, slot)
+    ids = [my_id] + [i for i in ids if i != my_id]
+    return d.put(BOARD_SECRET, BOARD_PUB, {"n": pack_ids(ids[:BOARD_PER_SLOT])}, seq + 1, board_salt(slot))
 
 
 def pack_ids(ids):

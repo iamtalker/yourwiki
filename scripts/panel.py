@@ -453,16 +453,17 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <p style="font-size:13px;color:#555">갱신기는 나무위키 서버 부담 때문에 6초에 1건만 받습니다. P2P 를 켜면 참여한 유어위키들이
 <b>서로 다른 문서</b>를 받아 나누므로, 참여자가 많을수록 빨리 따라잡습니다(나무위키로 가는 요청은 늘지 않습니다).
 <b>서버가 필요 없습니다</b>: 켜면 내 위키가 작은 'P2P 창구'를 열고(서명된 문서만 나가며 위키 화면은 공개되지 않습니다),
-그 창구 주소를 BitTorrent 공용 연결망(DHT)에 내 ID 로 적어 둡니다. 친구는 내 ID 만 알면 주소가 바뀌어도 찾아옵니다.</p>
-<div style="font-size:13px">내 ID (친구에게 알려 주세요): <code id="myid" style="word-break:break-all"></code>
+그 창구 주소를 BitTorrent 공용 연결망(DHT)에 내 ID 로 적어 둡니다. <b>켜 두기만 하면</b> 공용 연결망의 '유어위키 게시판'으로
+다른 유어위키를 알아서 찾아 주고받습니다(친구를 적을 필요 없음).</p>
+<div style="font-size:13px">내 ID: <code id="myid" style="word-break:break-all"></code>
 <button onclick="navigator.clipboard.writeText(document.getElementById('myid').textContent)">복사</button></div>
 <div style="font-size:13px;margin-top:8px">중계소 주소 (선택. 누군가 고정 주소 서버에 띄운 중계소가 있으면 적으세요):<br>
 <textarea id="hubs" rows="2" style="width:100%;font-size:13px"></textarea>
 <button onclick="api('/api/p2p_hubs?hubs='+encodeURIComponent(document.getElementById('hubs').value)).then(load)">중계소 저장</button></div>
-<div style="font-size:13px;margin-top:8px">친구 ID (한 줄에 하나. 친구가 보낸 문서는 바로 받고, 친구가 아는 다른 위키도 차례로 찾아갑니다):<br>
+<div style="font-size:13px;margin-top:8px">친구 ID (선택. 적으면 그 위키가 준 문서는 수습 기간 없이 바로 믿고 받습니다):<br>
 <textarea id="friends" rows="2" style="width:100%;font-size:13px"></textarea>
 <button onclick="api('/api/p2p_friends?ids='+encodeURIComponent(document.getElementById('friends').value)).then(load)">친구 저장</button></div>
-<p style="font-size:12px;color:#a60"><b>사보타주 방지</b>: 믿음은 주소가 아니라 ID 의 <b>검증 실적</b>으로만 쌓입니다.
+<p style="font-size:12px;color:#a60"><b>사보타주 방지</b>: 모르는 위키에게서도 자동으로 받지만, 믿음은 주소가 아니라 ID 의 <b>검증 실적</b>으로만 쌓입니다.
 갱신기가 P2P 로 받은 문서의 일부를 나무위키에서 직접 다시 받아 맞춰 보고, 5건을 통과한 ID 만 '검증된 ID' 가 됩니다.
 거짓이 확인되면 그 ID 를 차단하고 그 ID 에게서 받은 문서를 모두 되돌립니다. 새 ID(수습)들에게서는 <b>모두 합쳐</b> 한 시간에 200개까지만 받으므로,
 공격자가 ID 를 아무리 많이 만들어도 퍼질 수 있는 양은 늘지 않습니다. 내 문서와 절반 넘게 다른 내용은 나무위키에서 직접 확인합니다.
