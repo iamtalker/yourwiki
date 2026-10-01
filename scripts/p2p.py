@@ -213,10 +213,19 @@ def trusted_copy(q, title, since=0.0):
 
 
 # ---------------------------------------------------------------- 통신
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """남의 창구가 '다른 주소로 가라'(302 등)고 해도 따라가지 않는다 — 내 컴퓨터·공유기·내부망으로 요청을 돌리는 데 쓰일 수 있다."""
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def http_json(url, data=None, timeout=60):
     req = urllib.request.Request(url, data=data, headers={"User-Agent": UA, "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _OPENER.open(req, timeout=timeout) as r:
             raw = r.read(MAX_BODY + 1)
     except urllib.error.HTTPError as e:
         try:
@@ -521,7 +530,8 @@ class Worker:
             for b in r.get("batches", []):
                 node, items, sig = b.get("node", ""), b.get("items"), b.get("sig", "")
                 cursor = max(cursor, int(b.get("seq", cursor)))
-                if node == self.me or not isinstance(node, str) or not HEX64.match(node) or not isinstance(items, list):
+                if node == self.me or not isinstance(node, str) or not HEX64.match(node) or not isinstance(items, list) \
+                        or not 0 < len(items) <= hubmod.MAX_ITEMS:
                     continue
                 try:
                     ok = ed25519.verify(bytes.fromhex(node), canonical(items), bytes.fromhex(sig))
@@ -536,7 +546,7 @@ class Worker:
                 hubmod.store(relay, node, items, {}, sig)  # 대신 전하기(서명은 원래 위키의 것 그대로)
                 rows = []
                 for it in items:
-                    if isinstance(it, list) and len(it) == 5 and isinstance(it[0], str) and isinstance(it[1], str) \
+                    if isinstance(it, list) and len(it) == 5 and hubmod.title_ok(it[0]) and isinstance(it[1], str) \
                             and MODIFIED_RE.match(it[1]) and it[1] <= future and isinstance(it[2], str) \
                             and HEX64.match(it[2]) and isinstance(it[3], str) and isinstance(it[4], (int, float)):
                         self.clock = max(time.time(), self.clock + 1e-6)  # 내가 처음 본 순서
@@ -590,7 +600,8 @@ class Worker:
             try:
                 d = http_json(f"{h}/_hub/doc?sha={sha}", timeout=20)
                 text, redirect = d.get("text"), d.get("redirect") or ""
-                if isinstance(text, str) and len(text) <= MAX_TEXT and digest(text, redirect) == sha:
+                if isinstance(text, str) and len(text) <= MAX_TEXT and isinstance(redirect, str) \
+                        and (not redirect or hubmod.title_ok(redirect)) and digest(text, redirect) == sha:
                     return text, redirect
                 err = ValueError("본문 해시가 다름")
             except (OSError, ValueError, urllib.error.URLError) as e:

@@ -26,6 +26,8 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))  # 임베디�
 APP = "yourwiki-hub"
 VERSION = 2
 MAX_ITEMS = 500              # 묶음 하나의 최대 문서 수
+MAX_TITLE = 512              # 문서 제목·넘겨주기 대상의 최대 글자 수
+CTRL_RE = re.compile("[" + chr(0) + "-" + chr(31) + chr(127) + "]")  # 제어 문자
 NODE_HOURLY = 5000           # ID 하나가 한 시간에 보낼 수 있는 문서 수
 NEW_NODES_HOURLY = 200       # 처음 보는 ID 가 한 시간에 새로 생길 수 있는 수(ID 대량 생성 막기)
 MAX_TEXT = 5 << 20
@@ -54,6 +56,11 @@ def open_db(path):
     return db
 
 
+def title_ok(t):
+    """낯선 위키가 보낸 제목·넘겨주기 대상: 비어 있지 않고 너무 길지 않으며 제어 문자(줄바꿈 등)가 없어야 한다."""
+    return isinstance(t, str) and 0 < len(t) <= MAX_TITLE and not CTRL_RE.search(t)
+
+
 def submit(db, body):
     try:
         m = json.loads(body)
@@ -68,7 +75,7 @@ def submit(db, body):
     now = time.time()
     future = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now + 9 * 3600 + 600))  # 나무위키 시각(한국 표준시)
     for it in items:
-        if not (isinstance(it, list) and len(it) == 5 and isinstance(it[0], str) and it[0]
+        if not (isinstance(it, list) and len(it) == 5 and title_ok(it[0])
                 and isinstance(it[1], str) and MODIFIED_RE.match(it[1]) and it[1] <= future
                 and isinstance(it[2], str) and HEX64.match(it[2]) and isinstance(it[3], str) and len(it[3]) <= 16
                 and isinstance(it[4], (int, float)) and it[4] <= now + 600):
@@ -98,7 +105,7 @@ def submit(db, body):
 def good_doc(d, sha):
     from p2p import digest
     return (isinstance(d, list) and len(d) == 2 and isinstance(d[0], str) and isinstance(d[1], str)
-            and len(d[0]) <= MAX_TEXT and digest(d[0], d[1]) == sha)
+            and len(d[0]) <= MAX_TEXT and (not d[1] or title_ok(d[1])) and digest(d[0], d[1]) == sha)
 
 
 def store(db, node, items, docs, sig):
