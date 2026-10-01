@@ -271,6 +271,8 @@ def import_pack(wiki_dir, path, rng="all"):
     uq.commit()
     uq.close()
     src.close()
+    import updater
+    updater.sync_count(wiki_dir)  # 새 제목이 들어왔을 수 있으니 '전체 문서 수'를 다시 센다
     print(f"가져온 문서 {added:,}개(판 {revs:,}개) · 건너뜀 {skipped:,}개(내 쪽이 같거나 더 새로움)", flush=True)
     if added:
         print(f"검증: 나무위키 판이라고 적힌 {checkable:,}개는 갱신기가 틈틈이 나무위키와 맞춰 봅니다(거짓이면 이 파일에서 가져온 것을 모두 되돌림)."

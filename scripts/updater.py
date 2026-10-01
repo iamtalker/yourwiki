@@ -198,6 +198,39 @@ def footer(title, modified, via=""):
             f"기여자 목록은 [[{BASE}/history/{q}|원 문서의 역사]]에서 볼 수 있습니다.\n")
 
 
+def set_count(db, n=None, delta=0):
+    """위키 위쪽에 보이는 '전체 문서 수'(other.count_all_title). 엔진 밖에서 문서를 넣거나 지우면 여기도 고쳐야 숫자가 변한다.
+    n 이 없으면 지금 값에 delta 를 더한다(값이 아직 없으면 그대로 둠)."""
+    try:
+        if n is None:
+            r = db.execute("select data from other where name = 'count_all_title'").fetchone()
+            if not r:
+                return
+            n = int(r[0] or 0) + delta
+        db.execute("delete from other where name = 'count_all_title'")
+        db.execute("insert into other (name, data, coverage) values ('count_all_title', ?, '')", (str(max(n, 0)),))
+    except sqlite3.OperationalError:  # other 표가 없는 DB(시험용 등)는 숫자를 두지 않는다
+        pass
+
+
+def sync_count(wiki_dir):
+    """문서 수를 실제 data 표에서 다시 센다(옛 판이 올리지 않아 어긋난 값을 한 번 바로잡을 때).
+    (다시 세기 전의 값, 센 값)을 돌려준다. 옛 값은 설치 때 받은 문서 수와 같다(그 뒤 올리지 않았으므로)."""
+    db = sqlite3.connect(os.path.join(wiki_dir, "data.db"), timeout=60)
+    try:
+        try:
+            r = db.execute("select data from other where name = 'count_all_title'").fetchone()
+            old = int(r[0]) if r else None
+        except (sqlite3.OperationalError, ValueError):
+            old = None
+        n = db.execute("select count(*) from data").fetchone()[0]
+        set_count(db, n)
+        db.commit()
+        return old, n
+    finally:
+        db.close()
+
+
 def apply(wiki_dir, title, text, info, modified, via=""):
     """문서를 새 판으로 올린다. 바뀐 게 없으면 False. via 는 P2P 로 받았을 때 그 피어 주소(역사에 남긴다)."""
     db = sqlite3.connect(os.path.join(wiki_dir, "data.db"), timeout=60)
@@ -213,6 +246,7 @@ def apply(wiki_dir, title, text, info, modified, via=""):
         db.execute("update data set data = ? where title = ?", (data, wt))
     else:
         db.execute("insert into data (title, data, type) values (?, ?, '')", (wt, data))
+        set_count(db, delta=1)
     rev = (db.execute("select max(id + 0) from history where title = ?", (wt,)).fetchone()[0] or 0) + 1
     db.execute("insert into history (id, title, data, date, ip, send, leng, hide, type) "
                "values (?, ?, ?, ?, ?, ?, ?, '', ?)",
@@ -301,6 +335,15 @@ def main():
     log(PRINCIPLE)
     f, q = Fetcher(), open_queue(args.wiki_dir)
     p2p.init(q)  # P2P 를 꺼도 가져오기로 들어온 문서를 검증하는 데 쓴다
+    if p2p.get_meta(q, "count_synced") != "1":  # 옛 판은 새 문서를 넣고도 '전체 문서 수'를 올리지 않았다 → 한 번 다시 센다
+        try:
+            old, n = sync_count(args.wiki_dir)
+            if not p2p.get_meta(q, "base_docs"):  # 설치 때 받은 문서 수(관리판의 '받은 문서 N개 + 그 뒤 추가 M개')
+                p2p.set_meta(q, "base_docs", old or n)
+            p2p.set_meta(q, "count_synced", "1")
+            q.commit()
+        except sqlite3.Error as e:
+            log(f"문서 수를 다시 세지 못했습니다(다음에 다시 시도): {e}")
     try:
         if args.doc:
             refresh(f, q, args.wiki_dir, size_map, args.doc, args.p2p)

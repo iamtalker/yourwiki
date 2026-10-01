@@ -874,6 +874,8 @@ def restore(q, wiki_dir, title, node):
         db.executemany("insert into data_set (doc_name, doc_rev, set_name, set_data) values (?, '', ?, ?)",
                        [(wt, "last_edit", last_edit or ""), (wt, "length", str(len(data)))])
     elif b:
+        import updater
+        updater.set_count(db, delta=-1)
         db.execute("delete from data where title = ?", (wt,))
         db.execute("delete from data_set where doc_name = ?", (wt,))
         db.execute("delete from back where link = ?", (wt,))

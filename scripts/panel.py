@@ -346,7 +346,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "1.2.1"
+KIT_VERSION = "1.2.2"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -475,9 +475,27 @@ def status():
             pass
     st["docs"] = _cache.get("docs", s.get("docs"))
     try:
+        st["data_date"] = json.load(open(os.path.join(WIKI, "edition.json"), encoding="utf-8-sig")).get("date", "")
+    except (OSError, ValueError):
+        st["data_date"] = ""
+    try:
         q = sqlite3.connect(os.path.join(WIKI, "updater.db"), timeout=5)
         st["queue"] = q.execute("select count(*) from queue").fetchone()[0]
         st["fetched_today"] = q.execute("select count(*) from fetched where at > ?", (time.time() - 86400,)).fetchone()[0]
+        # 문서 수 내역: 설치한 데이터의 문서 수(처음 동기화 때 기록) + 동기화로 늘어난 수, 그리고 최신판으로 갱신한 문서 수
+        try:
+            b = q.execute("select v from meta where k = 'base_docs'").fetchone()
+            if not b and st["docs"] and not q.execute("select 1 from meta where k = 'count_synced'").fetchone():
+                # 갱신기가 처음 돌기 전에는 '전체 문서 수'가 설치 때 받은 수 그대로이므로 그 값을 기준으로 적어 둔다
+                q.execute("create table if not exists meta (k text primary key, v text)")
+                q.execute("insert or ignore into meta values ('base_docs', ?)", (str(st["docs"]),))
+                q.commit()
+                b = (str(st["docs"]),)
+            st["base_docs"] = int(b[0]) if b else None
+            st["synced"] = (q.execute("select count(*) from fetched").fetchone()[0]
+                            + q.execute("select count(*) from shared where src = 'p2p'").fetchone()[0])
+        except (sqlite3.Error, ValueError):
+            st["base_docs"], st["synced"] = None, 0
         # 대기열을 비우는 데 걸릴 시간: 나무위키 6초에 1건 + 최근 1시간 동안 P2P 로 받은 속도
         try:
             p2p_rate = q.execute("select count(*) from shared where src = 'p2p' and at > ?",
@@ -649,7 +667,9 @@ function openWiki(){window.open('http://'+listen.replace('0.0.0.0','127.0.0.1')+
 function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function dot(b){return b?'<span class=on>●</span>':'<span class=off>○</span>'}
 async function load(){const s=await (await fetch('/api/status')).json();listen=s.listen;
-var i=s.info;document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개':'아직 설치되지 않음')+
+var i=s.info;document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개'+
+(s.docs!=null&&s.base_docs!=null?'<br><span class="note">받은 데이터'+(s.data_date?'('+esc(s.data_date)+')':'')+' '+s.base_docs.toLocaleString()+'개 + 그 뒤 추가 '+Math.max(0,s.docs-s.base_docs).toLocaleString()+'개'+
+(s.synced?' · 나무위키 최신판으로 갱신한 문서 '+s.synced.toLocaleString()+'개':'')+'</span>':''):'아직 설치되지 않음')+
 ' · 디스크 여유 '+s.disk_free_gb+'GB<br><span style="font-size:13px;color:#555">유어위키 '+i.kit+' · 위키 엔진 '+i.engine+
 ' · 데이터 '+i.edition+'판 · 위키 DB '+i.db_gb+'GB · 검색 색인 '+i.index_gb+'GB · 받은 원본 '+i.dump_gb+'GB</span><br>'+dot(s.running.engine)+' 위키 엔진 '+dot(s.running.proxy)+' 중계 서버 '+
 dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중</b>':'')+

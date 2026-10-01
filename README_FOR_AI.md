@@ -144,6 +144,12 @@
 - 논의에서 정해진 것: Oracle 무료 서버 같은 중계소를 기본으로 두지 않는다(원칙 1). 친구 ID 없이도 찾게(BitTorrent 처럼).
   사용자가 자기 ID 를 알 필요도 없다(고급 설정에만).
 
+### 2026-10-02 — 1.2.2 (로컬 Windows 세션)
+- 문서 수가 안 늘던 원인: `updater.apply`·`p2p.restore`·`wiki_pack.import_pack` 이 `data` 표만 바꾸고 `other.count_all_title`(관리판이 읽는 값)을 안 올렸다.
+  → `updater.set_count/sync_count` 로 고침, 갱신기 첫 실행 때 한 번 다시 셈(meta `count_synced`), 그때 옛 값을 `base_docs` 로 기록(= 설치 때 받은 문서 수).
+  관리판은 `받은 데이터 N + 그 뒤 추가 M · 갱신한 문서 K`(K = fetched + p2p shared)를 보여 준다. 시험 `tests/test_count.py`.
+- 애니위키에는 갱신기가 없어 해당 없음(공통 규칙 확인함).
+
 ### 2026-10-02 — 1.2.1 (로컬 Windows 세션)
 - **상시 규칙(주인)**: 유어위키에서 **공통 기능**(관리판·중계 서버·내보내기·`wiki_pack`·터널·설치 스크립트·Docker·새 판 알림 등)을 고치면 형제 프로젝트
   `iamtalker/Anywiki-kit` 에도 같은 수정을 적용한다(로컬 `C:\claude program\anywiki-kit`). 나무위키 전용 기능(데이터·갱신기·P2P·중계소)은 해당 없음. 포트는 애니위키가 4000 대.
