@@ -346,7 +346,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "1.2.2"
+KIT_VERSION = "1.2.3"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -668,8 +668,7 @@ function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){retur
 function dot(b){return b?'<span class=on>●</span>':'<span class=off>○</span>'}
 async function load(){const s=await (await fetch('/api/status')).json();listen=s.listen;
 var i=s.info;document.getElementById('st').innerHTML=(s.installed?'설치됨 · 문서 '+(s.docs??'?').toLocaleString()+'개'+
-(s.docs!=null&&s.base_docs!=null?'<br><span class="note">받은 데이터'+(s.data_date?'('+esc(s.data_date)+')':'')+' '+s.base_docs.toLocaleString()+'개 + 그 뒤 추가 '+Math.max(0,s.docs-s.base_docs).toLocaleString()+'개'+
-(s.synced?' · 나무위키 최신판으로 갱신한 문서 '+s.synced.toLocaleString()+'개':'')+'</span>':''):'아직 설치되지 않음')+
+(s.docs!=null&&s.base_docs!=null?' (갱신 '+(s.synced||0).toLocaleString()+' · 추가 '+Math.max(0,s.docs-s.base_docs).toLocaleString()+')':''):'아직 설치되지 않음')+
 ' · 디스크 여유 '+s.disk_free_gb+'GB<br><span style="font-size:13px;color:#555">유어위키 '+i.kit+' · 위키 엔진 '+i.engine+
 ' · 데이터 '+i.edition+'판 · 위키 DB '+i.db_gb+'GB · 검색 색인 '+i.index_gb+'GB · 받은 원본 '+i.dump_gb+'GB</span><br>'+dot(s.running.engine)+' 위키 엔진 '+dot(s.running.proxy)+' 중계 서버 '+
 dot(s.running.updater)+' 갱신기 '+(s.running.install?'· <b>설치 진행 중</b>':'')+
