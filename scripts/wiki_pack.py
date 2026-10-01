@@ -25,6 +25,9 @@ import re
 import sqlite3
 import sys
 import time
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))  # 임베디드 파이썬은 스크립트 폴더를 찾지 않음
 
 DUMP_IPS = ("나무위키 덤프", "알파위키 덤프", "유어위키 키트")
 TABLES = ("data", "history", "data_set", "back")

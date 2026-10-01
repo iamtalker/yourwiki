@@ -18,6 +18,9 @@ import struct
 import time
 
 import ed25519
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))  # 임베디드 파이썬은 스크립트 폴더를 찾지 않음
 
 SALT = b"yourwiki"
 BOOTSTRAP = [("router.bittorrent.com", 6881), ("dht.transmissionbt.com", 6881),

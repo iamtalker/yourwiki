@@ -20,6 +20,9 @@ import sys
 import time
 import urllib.parse
 import zipfile
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))  # 임베디드 파이썬은 스크립트 폴더를 찾지 않음
 
 NOTICE = ("이 데이터는 나무위키(https://namu.wiki) 문서를 바탕으로 하며 CC BY-NC-SA 2.0 KR 라이선스를 따릅니다.\n"
           "저작권은 각 문서의 기여자에게 있고, 각 문서 끝에 원 문서 주소와 라이선스가 적혀 있습니다. 지우지 마세요.\n"

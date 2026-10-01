@@ -143,3 +143,13 @@
   MediaWiki·DokuWiki·Markdown 내보내기, 진행률·남은 시간 한국어 표시, 휴대폰 화면, 새 판 알림, P2P 칸 단순화(설명 + 켜기·끄기, 나머지는 고급 설정).
 - 논의에서 정해진 것: Oracle 무료 서버 같은 중계소를 기본으로 두지 않는다(원칙 1). 친구 ID 없이도 찾게(BitTorrent 처럼).
   사용자가 자기 ID 를 알 필요도 없다(고급 설정에만).
+
+## 진행 중 메모 (2026-10-02, 로컬 Windows 세션)
+- **내보내기가 안 되던 원인**: 키트의 임베디드 파이썬(`tools/python`)은 `._pth` 때문에 스크립트 폴더를 `sys.path` 에 넣지 않는다.
+  `convert_wiki.py`, `wiki_pack.py`(직접 실행됨), `dht.py`, `hub.py` 에 `sys.path.insert(0, 스크립트 폴더)` 를 추가함(아직 커밋 전).
+  → MediaWiki·DokuWiki·Markdown 내보내기는 20문서 시험 통과.
+- **남은 버그**: `wiki_pack.py export` 가 `sqlite3.OperationalError: unable to open database: file:C:\...\data.db?mode=ro` 로 실패.
+  Windows 경로(역슬래시·공백·한글)를 그대로 `file:` URI 에 넣어서다. `pathlib.Path(p).resolve().as_uri() + "?mode=ro"` 로 고칠 것
+  (같은 패턴이 다른 스크립트에도 있는지 `grep -n "file:{" scripts/*.py` 로 확인).
+- 교훈: 새 스크립트는 반드시 `tools/python/python.exe`(임베디드)로 시험한다. 일반 파이썬에서는 이 문제가 드러나지 않는다.
+- 고친 뒤: 커밋 → push → 1.2 릴리스(`yourwiki-1.2.zip` 자산 포함, CHANGELOG 1.2 의 "아직 릴리스 전" 제거, `panel.py` 의 KIT_VERSION 1.2).
