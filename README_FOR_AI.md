@@ -152,7 +152,7 @@
 
 ### 2026-10-02 — 1.2.1 (로컬 Windows 세션)
 - **상시 규칙(주인)**: 유어위키에서 **공통 기능**(관리판·중계 서버·내보내기·`wiki_pack`·터널·설치 스크립트·Docker·새 판 알림 등)을 고치면 형제 프로젝트
-  `iamtalker/Anywiki-kit` 에도 같은 수정을 적용한다(로컬 `C:\claude program\anywiki-kit`). 나무위키 전용 기능(데이터·갱신기·P2P·중계소)은 해당 없음. 포트는 애니위키가 4000 대.
+  `iamtalker/anywiki-kit` 에도 같은 수정을 적용한다(로컬 `C:\claude program\anywiki-kit`). 나무위키 전용 기능(데이터·갱신기·P2P·중계소)은 해당 없음. 포트는 애니위키가 4000 대.
 - 임베디드 파이썬 sys.path 문제와 `file:` URI(공백·한글 경로) 문제를 고쳐 1.2.1 로 릴리스. `wiki_pack` 은 ATTACH 에 URI 를 쓰므로 dst 연결도 `uri=True`.
 - 시험은 반드시 `PYTHONUTF8=1 tools/python/python.exe tests/run_all.py` (cp949 콘솔에서 하위 프로세스 출력 해석이 깨짐). 통과.
 
