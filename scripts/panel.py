@@ -8,6 +8,7 @@
 import json
 import re
 import os
+import pathlib
 import shutil
 import sqlite3
 import subprocess
@@ -345,7 +346,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "1.2"
+KIT_VERSION = "1.2.1"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -464,7 +465,7 @@ def status():
     if (st["installed"] and not starting and not st["running"]["install"]
             and (not st["ready"] or time.time() - _cache.get("docs_at", 0) > 60)):
         try:
-            db = sqlite3.connect(f"file:{os.path.join(WIKI, 'data.db')}?mode=ro", uri=True, timeout=1)
+            db = sqlite3.connect(pathlib.Path(WIKI, 'data.db').resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
             r = db.execute("select data from other where name = 'count_all_title'").fetchone()
             db.close()
             _cache["docs"], _cache["docs_at"] = (int(r[0]) if r else None), time.time()
@@ -504,7 +505,7 @@ def status():
     st["import_log"] = tail("import.log", 6)
     st["import_audit"] = {"pending": 0, "ok": 0, "bad": []}
     try:
-        q = sqlite3.connect(f"file:{os.path.join(WIKI, 'updater.db')}?mode=ro", uri=True, timeout=5)
+        q = sqlite3.connect(pathlib.Path(WIKI, 'updater.db').resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
         for audited, n in q.execute("select audited, count(*) from shared where src = 'import' group by audited"):
             st["import_audit"]["ok" if audited else "pending"] = n
         st["import_audit"]["bad"] = [[k[9:], v] for k, v in q.execute("select k, v from meta where k like 'bad:file:%'")]

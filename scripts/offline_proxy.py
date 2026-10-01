@@ -18,6 +18,7 @@ import http.server
 import json
 import mimetypes
 import os
+import pathlib
 import re
 import socketserver
 import sqlite3
@@ -282,7 +283,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if q:
             try:
                 path = os.path.join(os.path.dirname(os.path.abspath(self.queue_db)), "data.db")
-                db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+                db = sqlite3.connect(pathlib.Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
                 out = [r[0] for r in db.execute(
                     "select title from data where title >= ? and title < ? order by title limit 10",
                     (q, q + "\U0010ffff"))]

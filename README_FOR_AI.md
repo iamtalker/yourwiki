@@ -13,7 +13,7 @@
   AI 가 PR 을 병합하지 않는다(환경이 막기도 한다).
 - 주인은 **자기 생각이라고 무비판적으로 받지 말고, 치명적 문제가 있으면 말하라**고 했다. 동의만 하지 말고 위험을 짚는다.
 - 주인은 개발 용어보다 결과를 본다. 설명은 짧게, 용어는 풀어서.
-- 릴리스(GitHub Release)는 주인이 만든다. 판 번호는 `scripts/panel.py` 의 `KIT_VERSION` 과 `CHANGELOG.md`.
+- 릴리스(GitHub Release)는 **AI 가 만든다**(2026-10-02 주인 확인: 1.2 를 클라우드 세션이 만든 건 어쩔 수 없었던 것). 자산은 `git archive --prefix=yourwiki/ -o yourwiki-X.Y.zip HEAD`. 판 번호는 `scripts/panel.py` 의 `KIT_VERSION` 과 `CHANGELOG.md`.
 
 ## 2. 이 프로젝트의 원칙 (판단이 갈리면 이것으로 정한다)
 
@@ -144,7 +144,11 @@
 - 논의에서 정해진 것: Oracle 무료 서버 같은 중계소를 기본으로 두지 않는다(원칙 1). 친구 ID 없이도 찾게(BitTorrent 처럼).
   사용자가 자기 ID 를 알 필요도 없다(고급 설정에만).
 
-## 진행 중 메모 (2026-10-02, 로컬 Windows 세션)
+### 2026-10-02 — 1.2.1 (로컬 Windows 세션)
+- 임베디드 파이썬 sys.path 문제와 `file:` URI(공백·한글 경로) 문제를 고쳐 1.2.1 로 릴리스. `wiki_pack` 은 ATTACH 에 URI 를 쓰므로 dst 연결도 `uri=True`.
+- 시험은 반드시 `PYTHONUTF8=1 tools/python/python.exe tests/run_all.py` (cp949 콘솔에서 하위 프로세스 출력 해석이 깨짐). 통과.
+
+## 이전 메모 (2026-10-02, 위 1.2.1 에서 해결됨)
 - **내보내기가 안 되던 원인**: 키트의 임베디드 파이썬(`tools/python`)은 `._pth` 때문에 스크립트 폴더를 `sys.path` 에 넣지 않는다.
   `convert_wiki.py`, `wiki_pack.py`(직접 실행됨), `dht.py`, `hub.py` 에 `sys.path.insert(0, 스크립트 폴더)` 를 추가함(아직 커밋 전).
   → MediaWiki·DokuWiki·Markdown 내보내기는 20문서 시험 통과.

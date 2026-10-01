@@ -14,6 +14,7 @@ import datetime
 import gzip
 import html
 import os
+import pathlib
 import re
 import sqlite3
 import sys
@@ -669,7 +670,7 @@ def _pick(wiki_dir):
 
 
 def _raw_pages(wiki_dir, limit=0):
-    db = sqlite3.connect(f"file:{os.path.join(wiki_dir, 'data.db')}?mode=ro", uri=True, timeout=60)
+    db = sqlite3.connect(pathlib.Path(wiki_dir, 'data.db').resolve().as_uri() + "?mode=ro", uri=True, timeout=60)
     where, args = _pick(wiki_dir)
     sql = "select title, data from data" + where + " order by title" + (f" limit {int(limit)}" if limit else "")
     for title, data in db.execute(sql, args):
@@ -708,7 +709,7 @@ def pages(wiki_dir, target, limit=0, jobs=1):
 
 
 def count_pages(wiki_dir, limit=0):
-    db = sqlite3.connect(f"file:{os.path.join(wiki_dir, 'data.db')}?mode=ro", uri=True, timeout=60)
+    db = sqlite3.connect(pathlib.Path(wiki_dir, 'data.db').resolve().as_uri() + "?mode=ro", uri=True, timeout=60)
     where, args = _pick(wiki_dir)
     n = db.execute("select count(*) from data" + where, args).fetchone()[0]
     db.close()

@@ -13,6 +13,7 @@ import gzip
 import json
 import multiprocessing as mp
 import os
+import pathlib
 import sqlite3
 import sys
 import time
@@ -41,7 +42,7 @@ def work(row):
 
 
 def rows(src, limit):
-    con = sqlite3.connect(f"file:{os.path.abspath(src)}?mode=ro&immutable=1", uri=True)
+    con = sqlite3.connect(pathlib.Path(src).resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
     q = "select id, title, html, last_modified from docs order by id"
     if limit:
         q += f" limit {int(limit)}"
