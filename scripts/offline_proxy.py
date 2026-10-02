@@ -205,22 +205,42 @@ def from_namu(queue_db, title):
         return True
 
 
-_badge = {"mtime": None, "on": True}
+_panel = {"mtime": None, "d": {}}
 
 
-def badge_on():
-    """관리판에서 '최신판 갱신 표시'를 켜 두었는가(panel.json 의 refresh_badge, 기본 켬). 파일이 바뀔 때만 다시 읽는다."""
+def panel_setting(key, default):
+    """관리판에서 고른 설정(panel.json). 파일이 바뀔 때만 다시 읽는다."""
     try:
         mtime = os.path.getmtime(PANEL_JSON)
     except OSError:
-        return True
-    if mtime != _badge["mtime"]:
+        return default
+    if mtime != _panel["mtime"]:
         try:
-            _badge["on"] = json.load(open(PANEL_JSON, encoding="utf-8")).get("refresh_badge", True) is not False
+            d = json.load(open(PANEL_JSON, encoding="utf-8"))
+            _panel["d"] = d if isinstance(d, dict) else {}
         except (OSError, ValueError):
-            _badge["on"] = True
-        _badge["mtime"] = mtime
-    return _badge["on"]
+            _panel["d"] = {}
+        _panel["mtime"] = mtime
+    return _panel["d"].get(key, default)
+
+
+def badge_on():
+    """관리판에서 '최신판 갱신 표시'를 켜 두었는가(refresh_badge, 기본 켬)."""
+    return panel_setting("refresh_badge", True) is not False
+
+
+# 이미지 파일이 위키에 없을 때 오픈나무가 그리는 자리: <a class="opennamu_not_exist_link" title="파일:이름" href="/upload/…">(파일:이름)</a>
+NOIMG_RE = re.compile(r'<a class="opennamu_not_exist_link" title="([^"]*)" href="/upload/[^"]*">\([^<]*\)</a>')
+
+# 이미지가 다른 링크의 글자로 들어 있을 때([[문서|[[파일:…]]]])는 링크 글자가 '(파일:이름)' 으로 나온다. 글자가 이것뿐인 링크는 통째로 지운다.
+NOIMG_LABEL_RE = re.compile(r'<a [^>]*>\(파일:[^<()]*\)</a>')
+
+
+def hide_missing_images(body):
+    """관리판에서 켰으면, 위키에 없는 이미지 자리('(파일:이름)')를 화면에서 지운다. 문서 원문은 건드리지 않는다."""
+    if panel_setting("hide_missing_images", False) is not True:
+        return body
+    return NOIMG_LABEL_RE.sub("", NOIMG_RE.sub("", body))
 
 
 def refresh_button(body, path, queue_db=""):
@@ -432,7 +452,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if "text/html" in ctype:
             data = rewrite_html(data.decode("utf-8", "replace"))
             if self.queue_db:
-                data = add_suggest(refresh_button(data, self.path, self.queue_db))
+                data = add_suggest(refresh_button(hide_missing_images(data), self.path, self.queue_db))
             data = data.encode("utf-8")
         self.send_response(resp.status, resp.reason)
         for k, v in resp.getheaders():

@@ -114,6 +114,10 @@
 
 ## 7. 작업 기록 (새 항목을 위에 덧붙인다)
 
+### 2026-10-03 (2.0.8)
+- 없는 이미지 자리 숨기기 옵션 `hide_missing_images`(기본 끔, 관리판 「문서 화면 표시」 칸): `offline_proxy.hide_missing_images()` 가 문서 화면 HTML 에서 `<a class="opennamu_not_exist_link" … href="/upload/…">(파일:…)</a>` 와 링크 글자가 `(파일:…)` 뿐인 `<a>` 를 지운다. 엔진은 `file:이름` 문서가 DB 에 있고 `wiki/data/images/<sha224(이름)>.확장자` 파일이 있어야 그림을 보여 준다(그 외는 위 자리). 중계 서버의 설정 읽기는 `panel_setting(키, 기본값)`(panel.json 이 바뀔 때만 다시 읽음).
+- **나무위키 이미지를 받아 오는 기능은 만들지 않기로 했다**: 나무위키 robots.txt 가 이미지 경로를 허용하지 않고(`Disallow: /`, 허용은 /w/ 등만), 이미지 서버 `i.namu.wiki` 는 프로그램 요청을 403 으로 막아 우회가 필요하다. 갱신기는 robots.txt 를 지킨다는 원칙이다. 사용자가 직접 올리는 이미지는 오픈나무의 「파일 올리기」로 된다.
+
 ### 2026-10-03 (2.0.7)
 - 관리판에 「문서 화면 표시」 칸(`sec-badge`)을 따로 둠(체크박스 `refbadge`, 글자 16px, 기본 펼침). 상태 줄 「데이터 ?판」: `info()` 가 `edition.json` 을 `utf-8` 로 읽어 BOM(PowerShell `Out-File -Encoding utf8` 이 붙임)에서 실패 → `utf-8-sig`. **PowerShell 이 쓴 JSON 은 항상 `utf-8-sig` 로 읽는다.**
 

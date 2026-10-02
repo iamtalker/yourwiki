@@ -542,7 +542,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.7"
+KIT_VERSION = "2.0.8"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -652,7 +652,7 @@ def status():
     s = settings()
     st = {"installed": os.path.exists(os.path.join(WIKI, "data.db")), "sync": s["sync"], "listen": s["listen"],
           "color": s.get("color", "#3b5bdb"), "quit_on_close": s.get("quit_on_close", True),
-          "refresh_badge": s.get("refresh_badge", True),
+          "refresh_badge": s.get("refresh_badge", True), "hide_missing_images": s.get("hide_missing_images", False),
           "running": {n: alive(n) for n in ("engine", "proxy", "updater", "install")}}
     st["ready"] = st["running"]["engine"] and port_open(3001)
     # 위키 엔진이 '켜지는 중'에는 data.db 를 열지 않는다.
@@ -765,7 +765,9 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <div id="sync"></div><pre id="ulog"></pre></details>
 <details class="sec" id="sec-badge" data-default="1" open><summary><h2>문서 화면 표시</h2><span class="sum" id="sum-badge"></span></summary>
 <label style="font-size:16px"><input type="checkbox" id="refbadge" onchange="api('/api/refresh_badge?on='+(this.checked?1:0)).then(load)"> 문서 화면 왼쪽 아래에 「🔄 나무위키 최신판으로 갱신」·「✔ 최신 버전」 표시 보이기</label>
-<p style="font-size:13px;color:#555">끄면 문서 화면에 아무 표시도 붙지 않습니다(바로 적용). 동기화 설정과는 별개이며 표시만 숨깁니다.</p></details>
+<p style="font-size:13px;color:#555">끄면 문서 화면에 아무 표시도 붙지 않습니다(바로 적용). 동기화 설정과는 별개이며 표시만 숨깁니다.</p>
+<label style="font-size:16px"><input type="checkbox" id="hideimg" onchange="api('/api/hide_missing_images?on='+(this.checked?1:0)).then(load)"> 위키에 없는 이미지 자리(「(파일:이름)」 글자)를 화면에서 숨기기</label>
+<p style="font-size:13px;color:#555">문서에는 이미지 파일이 들어 있지 않아 자리가 「(파일:…)」 링크로 나옵니다. 켜면 그 자리를 아예 보이지 않게 합니다(바로 적용). 문서 원문은 바뀌지 않습니다.</p></details>
 <details class="sec" id="sec-p2p" data-default="0"><summary><h2>P2P 공유</h2><span class="sum" id="sum-p2p"></span></summary>
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
 <label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
@@ -924,7 +926,8 @@ var ia=s.import_audit;document.getElementById('iaudit').innerHTML=(ia.pending||i
 ia.bad.map(b=>'<div style="color:#c00">거짓 내용이 확인되어 되돌린 파일: <b>'+esc(b[0])+'</b> — '+esc(b[1])+'</div>').join('');
 sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
-sum('badge',s.refresh_badge!==false?'<b class=on>켬</b>':'끔');
+sum('badge',(s.refresh_badge!==false?'<b class=on>갱신 표시 켬</b>':'갱신 표시 끔')+(s.hide_missing_images?' · 없는 이미지 숨김':''));
+var di=document.getElementById('hideimg');if(di&&document.activeElement!==di)di.checked=!!s.hide_missing_images;
 var rb=document.getElementById('refbadge');if(rb&&document.activeElement!==rb)rb.checked=s.refresh_badge!==false;
 var qc=document.getElementById('quitclose');if(qc&&document.activeElement!==qc)qc.checked=s.quit_on_close!==false;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
@@ -981,6 +984,10 @@ class Handler(BaseHTTPRequestHandler):
             on = (q.get("on") or ["1"])[0] == "1"
             remember(refresh_badge=on)
             msg = "문서 화면의 최신판 갱신 표시를 " + ("보여 줍니다" if on else "숨깁니다")
+        elif u.path == "/api/hide_missing_images":
+            on = (q.get("on") or ["0"])[0] == "1"
+            remember(hide_missing_images=on)
+            msg = "없는 이미지 자리를 " + ("숨깁니다" if on else "원래대로 「(파일:이름)」 글자로 보여 줍니다")
         elif u.path == "/api/color":
             c = (q.get("c") or [""])[0]
             if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
