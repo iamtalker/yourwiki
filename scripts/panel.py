@@ -568,7 +568,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.9"
+KIT_VERSION = "2.0.10"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -1114,8 +1114,8 @@ def close_watcher(srv):
 
 def main():
     kill_children_on_exit()
-    load_ext()
     cleanup_leftovers()
+    load_ext()  # 정리 뒤에 불러온다(확장이 켠 프로그램이 정리에 같이 꺼지지 않게)
     os.makedirs(IMPORT_DIR, exist_ok=True)  # 가져올 파일을 넣는 곳
     threading.Thread(target=update_loop, daemon=True).start()
     srv = None

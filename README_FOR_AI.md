@@ -114,6 +114,10 @@
 
 ## 7. 작업 기록 (새 항목을 위에 덧붙인다)
 
+### 2026-10-03 (2.0.10)
+- 검색창 엔터: `LAYOUT_JS` 가 단추를 돋보기 → 화살표로 DOM 순서까지 바꿔서, 엔터(폼의 첫 제출 단추 = 암묵적 제출)가 `/search` 가 되었다. 돋보기 단추의 `click` 이 `detail===0`(키보드 제출)이고 입력창이 포커스면 `requestSubmit(goto 단추)` 로 보낸다. 서버 `/goto` 는 있는 문서면 `/w/`, 없으면 `/search/`(파이썬으로 UTF-8 POST 해서 확인; git-bash curl 은 한글을 cp949 로 보내므로 시험에 쓰지 말 것).
+- `main()` 에서 `load_ext()` 를 `cleanup_leftovers()` 뒤로: 후자가 이 폴더의 `python.exe` 를 전부 끄므로 확장이 켠 프로세스가 같이 죽었다.
+
 ### 2026-10-03 (2.0.9)
 - 개인 확장 연결점: `panel.py` 의 `load_ext()`/`ext_call()`(훅: `init(panel)`, `html()`, `status()`, `handle(path, q)`, 화면 JS 의 `extUpdate(s)`)과 `offline_proxy.py` 의 `load_ext()`/`ext_decorate()`(훅: `init(proxy)`, `decorate(body, path, queue_db)`). 확장 파일은 `local_ext/`(저장소에 없음, 사용자의 `.git/info/exclude` 로 제외). 파일이 없으면 무동작이고, 확장 오류는 삼킨다. `local_ext/` 의 내용·이유는 이 저장소에 적지 않는다(사용자가 올리지 않기로 한 개인용 기능).
 
