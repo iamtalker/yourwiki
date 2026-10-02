@@ -45,19 +45,6 @@
       ],
       "sha256": "62ede50c50de56666f5cda0988244eb6a7e09c3f70f7138353b1bb26bd7b7c9d",
       "note": "2.0: 문서에 펼쳐져 있던 틀 2,324종을 [include] 로 되접은 판"
-    },
-    "2021": {
-      "file": "namuwiki210301.7z",
-      "date": "2021-03-01",
-      "docs": 870000,
-      "size": 1988118242,
-      "md5": "7f6dbc8de1acee36155505c8d2d1bcf6",
-      "sources": [
-        {
-          "type": "http",
-          "url": "https://archive.org/download/namuwikidumps/namuwiki210301.7z"
-        }
-      ]
     }
   },
   "default_edition": "2026",

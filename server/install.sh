@@ -2,7 +2,6 @@
 # 유어위키 리눅스 서버 설치 (베타: 실제 리눅스 서버에서 아직 충분히 시험하지 않았습니다)
 #
 #   bash server/install.sh            # 2026판 설치
-#   bash server/install.sh 2021       # 2021 공식 덤프 원문 설치
 #
 # 필요한 것: python3(3.8+), 7z(p7zip-full), curl, sha256sum, md5sum, 디스크 45GB 이상
 # 이미 끝난 단계는 건너뛰므로, 중간에 끊겨도 다시 실행하면 이어서 진행합니다.

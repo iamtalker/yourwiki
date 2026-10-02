@@ -27,7 +27,7 @@ import urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 임베디드 파이썬은 스크립트 폴더를 path에 넣지 않음
 from namudump import open_dump, read_docs  # noqa: E402
 
-DUMP_DATE = "2021-03-01"  # --dump-date 로 바뀜
+DUMP_DATE = "2026-08-29"  # --dump-date 로 바뀜(설치 스크립트가 항상 넘김)
 LICENSE_URL ="https://creativecommons.org/licenses/by-nc-sa/2.0/kr/"
 BATCH = 5000
 
@@ -108,7 +108,7 @@ def main():
     ap.add_argument("--7z", dest="seven_zip", default="7z")
     ap.add_argument("--history", choices=["light", "full"], default="light")
     ap.add_argument("--skip-ns", default="", help="제외할 namespace 번호, 쉼표 구분")
-    ap.add_argument("--dump-date", default="2021-03-01", help="덤프 기준일(저작자 표시에 사용)")
+    ap.add_argument("--dump-date", default="2026-08-29", help="덤프 기준일(저작자 표시에 사용)")
     ap.add_argument("--limit", type=int, default=0, help="시험용: N개만 가져오기")
     ap.add_argument("--expected", type=int, default=0, help="예상 문서 수(진행률·남은 시간 표시용)")
     args = ap.parse_args()

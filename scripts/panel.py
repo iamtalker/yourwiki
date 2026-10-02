@@ -32,6 +32,7 @@ NO_WINDOW = 0x08000000 if WIN else 0  # CREATE_NO_WINDOW
 
 procs = {}
 lock = threading.Lock()
+_bye = {"t": 0.0}  # 브라우저 창이 닫혔다는 신호를 받은 시각(0 이면 없음)
 _cache = {}
 
 
@@ -163,22 +164,85 @@ def start_proxy():
 
 
 def port_owner(port):
-    """그 포트를 듣고 있는 프로세스의 (PID, 실행 파일 경로). 비어 있으면 None. Windows 만(그 밖은 None)."""
+    """그 포트를 듣고 있는 프로세스의 (PID, 실행 파일 경로, 명령줄). 비어 있으면 None. Windows 만(그 밖은 None)."""
     if not WIN:
         return None
     ps = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
           f"$c = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; "
           "if ($c) { $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $c.OwningProcess); "
-          "Write-Output ([string]$c.OwningProcess + '|' + [string]$p.ExecutablePath) }")
+          "Write-Output ([string]$c.OwningProcess + '|' + [string]$p.ExecutablePath + '|' + [string]$p.CommandLine) }")
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=NO_WINDOW, timeout=30)
         out = r.stdout.decode("utf-8", "replace").strip()
     except (OSError, subprocess.SubprocessError):
         return None
-    if "|" not in out:
+    if out.count("|") < 2:
         return None
-    pid, path = out.split("|", 1)
-    return int(pid), path.strip()
+    pid, path, cmd = out.split("|", 2)
+    return int(pid), path.strip(), cmd.strip()
+
+
+KIT_SCRIPT = re.compile(r"([A-Za-z]:[\\/][^\"]*?)[\\/]scripts[\\/](?:offline_proxy|updater|p2p|hub_server|panel)\.py", re.I)
+
+
+def other_kit_root(owner):
+    """포트 주인이 '다른 폴더의 유어위키 프로그램'으로 확인되면 그 폴더(루트)를, 아니면 None.
+    확인 방법: 실행 파일에서 위로 올라가며 scripts/panel.py 와 sources.json 이 있는 폴더를 찾거나, 명령줄이 이 키트의 스크립트를 가리킴."""
+    pid, exe, cmd = owner
+    d = os.path.dirname(exe or "")
+    for _ in range(4):
+        if d and os.path.exists(os.path.join(d, "scripts", "panel.py")) and os.path.exists(os.path.join(d, "sources.json")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    m = KIT_SCRIPT.search(cmd or "")
+    if m and os.path.exists(os.path.join(m.group(1), "scripts", "panel.py")):
+        return m.group(1)
+    return None
+
+
+def same_dir(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def kit_busy(root):
+    """그 폴더의 유어위키가 설치·가져오기·내보내기 같은 작업 중인가(Windows). 작업 중이면 그 엔진을 끄면 작업이 망가진다."""
+    if not WIN:
+        return False
+    ps = ("$root = '" + os.path.abspath(root).replace("'", "''") + "'; "
+          r"$pat = [regex]::Escape($root + '\scripts\') + '(install\.ps1|import_dump\.py|wiki_pack\.py|export_dump\.py|convert_wiki\.py|build_2026\.py)'; "
+          r"@(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(powershell|pwsh|python|pythonw)\.exe$' -and "
+          r"$_.CommandLine -and $_.ProcessId -ne $PID -and $_.CommandLine -match $pat }).Count")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=NO_WINDOW, timeout=30)
+        return int((r.stdout.decode("utf-8", "replace").strip() or "0")) > 0
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def free_ports_from_other_kits(ports):
+    """다른 폴더의 유어위키가 이 포트들을 쓰고 있으면 그 위키(관리판 포함)를 끄고 포트가 비기를 기다린다.
+    유어위키 프로그램으로 확인되지 않는 프로그램은 건드리지 않고, 그 폴더가 설치·가져오기 중이면 끄지 않는다."""
+    killed = set()
+    for port in ports:
+        owner = port_owner(port)
+        if not owner:
+            continue
+        root = other_kit_root(owner)
+        if root and not same_dir(root, ROOT) and kit_busy(root):
+            print(f"다른 폴더의 유어위키({root})가 설치·가져오기 같은 작업 중이라 끄지 않습니다", flush=True)
+            continue
+        if root and not same_dir(root, ROOT) and os.path.normcase(os.path.abspath(root)) not in killed:
+            print(f"다른 폴더의 유어위키({root})가 포트 {port} 을(를) 쓰고 있어 먼저 끕니다", flush=True)
+            sweep_wiki_processes(root, include_panel=True)
+            killed.add(os.path.normcase(os.path.abspath(root)))
+    if killed:
+        for _ in range(20):  # 최대 10초 기다린다
+            if not any(port_open(p) for p in ports):
+                break
+            time.sleep(0.5)
 
 
 def foreign_port_conflict(ports):
@@ -210,7 +274,8 @@ def start_wiki(open_browser=True):
                     pass
             if settings().get("p2p") and not alive("p2pwin"):
                 ports.append(P2P_PORT)
-            conflict = foreign_port_conflict(ports)
+            free_ports_from_other_kits(ports)  # 다른 폴더의 유어위키가 켜져 있으면 먼저 끈다
+            conflict = foreign_port_conflict(ports)  # 그래도 남았다면 유어위키가 아닌 프로그램이다 → 안내하고 멈춤
             if conflict:
                 return conflict
         if not alive("engine"):
@@ -235,11 +300,91 @@ def start_wiki(open_browser=True):
     return "켰습니다. 준비되면 첫 화면이 자동으로 열립니다"
 
 
+def sweep_wiki_processes(root=None, include_panel=False):
+    """어떤 유어위키 폴더(기본: 이 폴더)의 위키 프로그램(엔진·중계 서버·갱신기·P2P·터널)이 남아 있으면 끈다(Windows).
+    설치·가져오기·내보내기 같은 작업의 프로세스는 건드리지 않는다(명령줄로 구분). include_panel 이면 그 폴더의 관리판도 끈다."""
+    if not WIN:
+        return
+    root = os.path.abspath(root or ROOT)
+    pat = r"offline_proxy\.py|updater\.py|p2p\.py|hub_server\.py" + (r"|panel\.py" if include_panel else "")
+    ps = ("$root = '" + root.replace("'", "''") + "'; "
+          "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne " + str(os.getpid()) + " -and "
+          "$_.ExecutablePath -and $_.ExecutablePath.StartsWith($root) -and ("
+          "$_.Name -in @('main.amd64.exe','cloudflared.exe') -or "
+          r"($_.Name -match '^pythonw?\.exe$' -and $_.CommandLine -match '" + pat + "')) } | "
+          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], creationflags=NO_WINDOW,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def wiki_ports():
+    ports = [3001, P2P_PORT]
+    try:
+        ports.append(int(settings()["listen"].rsplit(":", 1)[1]))
+    except (ValueError, IndexError):
+        pass
+    return ports
+
+
 def stop_wiki():
+    """위키를 확실히 끈다: 기억해 둔 프로세스를 끄고, 남은 것은 폴더 안 프로세스를 찾아 끄고, 포트가 비었는지 확인한다."""
     with lock:
         for n in ("tunnel", "p2p", "p2ptunnel", "p2pwin", "updater", "proxy", "engine"):
             stop(n)
-    return "껐습니다"
+        sweep_wiki_processes()
+        busy_ports = []
+        for _ in range(20):  # 최대 10초 기다리며 포트가 닫히는지 본다
+            busy_ports = [p for p in wiki_ports() if port_open(p)]
+            if not busy_ports:
+                break
+            time.sleep(0.5)
+    if busy_ports:
+        who = port_owner(busy_ports[0])
+        return (f"껐지만 포트 {busy_ports[0]} 이 아직 열려 있습니다" + (f": {who[1]}" if who and who[1] else "")
+                + " — 작업 관리자에서 그 프로그램을 끄세요")
+    return "껐습니다(엔진·중계 서버·동기화·P2P·터널 모두 종료, 포트 닫힘 확인)"
+
+
+_job = None  # 관리판이 어떤 이유로든 끝나면 윈도우가 딸린 프로그램도 함께 끄도록 하는 작업 개체(닫히면 전부 종료)
+
+
+def kill_children_on_exit():
+    """Windows 작업 개체(Job Object): 관리판 창·콘솔을 그냥 닫아도 엔진·중계 서버·동기화 같은 딸린 프로세스가 남지 않게 한다."""
+    global _job
+    if not WIN:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+        class EXT(ctypes.Structure):
+            _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        # 64비트에서 핸들이 잘리지 않도록 인자·반환 형식을 선언한다(안 하면 조용히 실패한다)
+        k.CreateJobObjectW.restype = wintypes.HANDLE
+        k.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        k.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k.GetCurrentProcess.restype = wintypes.HANDLE
+        job = k.CreateJobObjectW(None, None)
+        info = EXT()
+        info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if job and k.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)) \
+                and k.AssignProcessToJobObject(job, k.GetCurrentProcess()):
+            _job = job  # 핸들을 붙잡아 둔다(프로세스가 끝나 핸들이 닫히면 작업 개체 안의 프로세스가 모두 종료됨)
+    except Exception:  # 작업 개체를 못 만들어도 관리판은 그대로 동작한다(다음 시작 때 정리)
+        _job = None
 
 
 def run_install(edition):
@@ -391,7 +536,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.1"
+KIT_VERSION = "2.0.2"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -500,7 +645,7 @@ def port_open(port):
 def status():
     s = settings()
     st = {"installed": os.path.exists(os.path.join(WIKI, "data.db")), "sync": s["sync"], "listen": s["listen"],
-          "color": s.get("color", "#3b5bdb"),
+          "color": s.get("color", "#3b5bdb"), "quit_on_close": s.get("quit_on_close", True),
           "running": {n: alive(n) for n in ("engine", "proxy", "updater", "install")}}
     st["ready"] = st["running"]["engine"] and port_open(3001)
     # 위키 엔진이 '켜지는 중'에는 data.db 를 열지 않는다.
@@ -602,7 +747,8 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <details class="sec" id="sec-st" data-default="1" open><summary><h2>상태</h2><span class="sum" id="sum-st"></span></summary><div id="st">불러오는 중…</div></details>
 <details class="sec" id="sec-wiki" data-default="1" open><summary><h2>위키</h2><span class="sum" id="sum-wiki"></span></summary>
 <button onclick="act('start')">켜기</button><button onclick="act('stop')">끄기</button>
-<button onclick="openWiki()">위키 열기</button></details>
+<button onclick="openWiki()">위키 열기</button>
+<label style="margin-left:12px;font-size:13px"><input type="checkbox" id="quitclose" onchange="api('/api/quit_on_close?on='+(this.checked?1:0))"> 관리판 창을 닫으면 위키도 끄고 종료(설치·내보내기 중에는 닫아도 계속)</label></details>
 <details class="sec" id="sec-sync" data-default="0"><summary><h2>나무위키 최신판 동기화</h2><span class="sum" id="sum-sync"></span></summary>
 <label><input type="radio" name="sync" value="off" onchange="setSync(this.value)"> 끄기</label>
 <label><input type="radio" name="sync" value="queue" onchange="setSync(this.value)"> 요청한 문서만</label>
@@ -768,12 +914,14 @@ var ia=s.import_audit;document.getElementById('iaudit').innerHTML=(ia.pending||i
 ia.bad.map(b=>'<div style="color:#c00">거짓 내용이 확인되어 되돌린 파일: <b>'+esc(b[0])+'</b> — '+esc(b[1])+'</div>').join('');
 sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
+var qc=document.getElementById('quitclose');if(qc&&document.activeElement!==qc)qc.checked=s.quit_on_close!==false;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
 document.querySelectorAll('details.sec').forEach(function(d){
   try{var v=localStorage.getItem('kit-'+d.id);if(v!==null)d.open=v==='1'}catch(e){}
   d.addEventListener('toggle',function(){try{localStorage.setItem('kit-'+d.id,d.open?'1':'0')}catch(e){}})});
 function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return '&#'+c.charCodeAt(0)+';'})}
 function sum(k,h){var e=document.getElementById('sum-'+k);if(e&&e.innerHTML!==h)e.innerHTML=h}
+window.addEventListener('pagehide',function(){try{navigator.sendBeacon('/api/bye')}catch(e){}});
 load();setInterval(load,3000);
 </script></html>"""
 
@@ -792,6 +940,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path in ("/", "/api/status"):
+            _bye["t"] = 0.0  # 창이 다시 열렸거나 새로 고침 — 닫힘 신호를 취소한다
         if path == "/":
             return self.send(200, PAGE, "text/html; charset=utf-8")
         if path == "/api/status":
@@ -807,6 +957,14 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/stop":
             remember(wiki_on=False)
             msg = stop_wiki()
+        elif u.path == "/api/bye":  # 브라우저가 관리판 창을 닫을 때 보내는 신호(새로 고침이면 곧 취소됨)
+            if settings().get("quit_on_close", True):
+                _bye["t"] = time.time()
+            msg = "ok"
+        elif u.path == "/api/quit_on_close":
+            on = (q.get("on") or ["1"])[0] == "1"
+            remember(quit_on_close=on)
+            msg = "관리판 창을 닫으면 위키도 " + ("끕니다" if on else "끄지 않습니다(다음에 관리판을 열 때 정리됨)")
         elif u.path == "/api/color":
             c = (q.get("c") or [""])[0]
             if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
@@ -883,21 +1041,45 @@ def update_loop():
         time.sleep(3600)
 
 
+def close_watcher(srv):
+    """브라우저 창이 닫힌 지 10초가 지나도 다시 열리지 않으면 위키를 끄고 관리판을 끝낸다(설치·가져오기·내보내기 중에는 안 끝냄)."""
+    while True:
+        time.sleep(2)
+        t = _bye["t"]
+        if not t or time.time() - t < 10:
+            continue
+        if any(alive(n) for n in ("install", "import", "export")) or not settings().get("quit_on_close", True):
+            _bye["t"] = 0.0
+            continue
+        print("관리판 창이 닫혀 위키를 끄고 종료합니다", flush=True)
+        threading.Thread(target=srv.shutdown, daemon=True).start()  # serve_forever 가 끝나면 finally 에서 stop_wiki
+        return
+
+
 def main():
+    kill_children_on_exit()
     cleanup_leftovers()
     os.makedirs(IMPORT_DIR, exist_ok=True)  # 가져올 파일을 넣는 곳
     threading.Thread(target=update_loop, daemon=True).start()
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
-    except OSError:
+    srv = None
+    for attempt in range(2):
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
+            break
+        except OSError:
+            if attempt == 0:
+                free_ports_from_other_kits([PANEL_PORT])  # 다른 폴더의 유어위키 관리판이면 끄고 다시 시도
+    if srv is None:
         owner = port_owner(PANEL_PORT)
         where = (owner[1] or f"PID {owner[0]}") if owner else "알 수 없는 프로그램"
-        print(f"관리판 포트 {PANEL_PORT} 을(를) 이미 쓰고 있습니다: {where}\n"
-              "다른 폴더의 유어위키 관리판이 켜져 있을 수 있습니다. 그쪽 창을 닫거나 작업 관리자에서 끄고 다시 실행하세요.", flush=True)
+        print(f"관리판 포트 {PANEL_PORT} 을(를) 유어위키가 아닌 프로그램이 쓰고 있습니다: {where}\n"
+              "그 프로그램을 끄고 다시 실행하세요.", flush=True)
         sys.exit(1)
+    threading.Thread(target=close_watcher, args=(srv,), daemon=True).start()
     url = f"http://127.0.0.1:{PANEL_PORT}/"
-    print(f"유어위키 관리판: {url}  (끌 때는 관리판에서 [끄기]를 누르세요)", flush=True)
-    webbrowser.open(url)
+    print(f"유어위키 관리판: {url}  (끌 때는 [끄기]를 누르거나 관리판 창을 닫으세요)", flush=True)
+    if "--no-browser" not in sys.argv:  # 자동 시험·서버처럼 브라우저가 필요 없을 때
+        webbrowser.open(url)
     # 지난번에 위키를 켜 둔 채로 끝냈으면 다시 켠다(끄기를 누른 경우만 꺼진 채로 둔다)
     s = settings()
     if s.get("wiki_on") and os.path.exists(os.path.join(WIKI, "data.db")):

@@ -8,7 +8,7 @@ services:
     environment:
       SYNC: "${SYNC:-auto}"        # auto(자동 따라잡기) / queue(갱신 단추로 요청한 문서만) / off
       COLOR: "${COLOR:-#3b5bdb}"   # 위키 머리글 색
-      EDITION: "${EDITION:-}"      # 비우면 2026판, 2021 이면 공식 덤프 원문
+      EDITION: "${EDITION:-}"      # 비우면 기본 데이터판(sources.json 의 default_edition)
       P2P: "${P2P:-off}"            # on 이면 다른 유어위키와 받은 문서를 나눔
       P2P_FRIENDS: "${P2P_FRIENDS:-}" # 친구 ID(쉼표로 구분). 서버 없이 공용 연결망(DHT)으로 서로 찾음
       P2P_URL: "${P2P_URL:-}"       # 내 P2P 창구(3002)로 오는 고정 주소가 있으면. 비우면 임시 공개 주소 자동
