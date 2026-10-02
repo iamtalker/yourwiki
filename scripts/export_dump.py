@@ -5,7 +5,9 @@
 추가 필드: last_modified(원 문서 최근 수정 시각), source(출처 설명).
 틀 문서는 매개변수가 살아 있는 원본(extras/*.jsonl.gz, 파일 이름 순서가 우선순위)을 쓴다.
 
-사용: python export_dump.py <converted.jsonl.gz> <출력.json> [--templates extras 폴더]
+되접은 틀(refold/ 작업의 templates_refolded.jsonl.gz)이 있으면 --refolded 로 주면 가장 먼저 쓴다(2.0 판).
+
+사용: python export_dump.py <converted.jsonl.gz> <출력.json> [--templates extras 폴더] [--refolded 되접은 틀.jsonl.gz]
 """
 import argparse
 import glob
@@ -21,9 +23,15 @@ def main():
     ap.add_argument("src")
     ap.add_argument("out")
     ap.add_argument("--templates", default=os.path.join(os.path.dirname(__file__), "..", "extras"))
+    ap.add_argument("--refolded", default="", help="되접은 틀 문서(.jsonl.gz). 틀 원본(extras)보다 먼저 쓴다")
     args = ap.parse_args()
 
     originals = {}
+    if args.refolded:
+        with gzip.open(args.refolded, "rt", encoding="utf-8") as f:
+            for line in f:
+                t = json.loads(line)
+                originals.setdefault(t["title"], t)
     for p in sorted(glob.glob(os.path.join(args.templates, "*.jsonl.gz"))):
         with gzip.open(p, "rt", encoding="utf-8") as f:
             for line in f:

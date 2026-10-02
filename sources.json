@@ -31,24 +31,20 @@
   },
   "editions": {
     "2026": {
-      "file": "yourwiki-namumark-20260829-build20260928.7z",
+      "file": "yourwiki-namumark-20260829-build20261002.7z",
       "date": "2026-08-29",
       "docs": 1787556,
-      "size": 5462788206,
-      "md5": "2466239f09c0b164ab0c9fcad65af85f",
+      "size": 5346221800,
+      "md5": "4e2a2fdd7bd53c91a811ac26c25b70df",
       "sources": [
         {
           "type": "http",
-          "url": "https://archive.org/download/yourwiki-namumark-20260829/yourwiki-namumark-20260829-build20260928.7z",
-          "note": "archive.org 영구 보관 (MD5 확인 완료 2026-09-28)"
-        },
-        {
-          "type": "http",
-          "url": "https://huggingface.co/datasets/iamtalker/yourwiki-namumark-20260829/resolve/main/yourwiki-namumark-20260829-build20260928.7z",
-          "note": "Hugging Face 보조 경로 (SHA-256 확인 완료)"
+          "url": "https://huggingface.co/datasets/iamtalker/yourwiki-namumark-20260829/resolve/main/yourwiki-namumark-20260829-build20261002.7z",
+          "note": "Hugging Face (SHA-256 확인 후 이 줄을 유지, archive.org 에 올라가면 위에 추가)"
         }
       ],
-      "sha256": "7cc470f1eee12823c60db9cc628ef6656924c8f76bc054545ac476e84976d6ff"
+      "sha256": "62ede50c50de56666f5cda0988244eb6a7e09c3f70f7138353b1bb26bd7b7c9d",
+      "note": "2.0: 문서에 펼쳐져 있던 틀 2,324종을 [include] 로 되접은 판"
     },
     "2021": {
       "file": "namuwiki210301.7z",

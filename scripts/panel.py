@@ -346,7 +346,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "1.2.4"
+KIT_VERSION = "2.0"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
