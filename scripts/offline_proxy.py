@@ -186,6 +186,24 @@ def checked_at(queue_db, title):
     return row[0] if row and time.time() - row[0] < 24 * 3600 else None
 
 
+NAMU_AUTHORS = ("나무위키 덤프", "유어위키 갱신기", "유어위키 P2P")  # 나무위키에서 가져온 판의 편집자 이름
+
+
+def from_namu(queue_db, title):
+    """이 문서가 나무위키에서 온 적이 있는가(역사에 나무위키 덤프·갱신기·P2P 판이 있는가).
+    우리가 만든 문서나 직접 새로 쓴 문서에는 '나무위키 최신판으로 갱신' 단추가 맞지 않다. 확인하지 못하면 True."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(queue_db)), "data.db")
+        db = sqlite3.connect(pathlib.Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        try:
+            return db.execute("select 1 from history where title = ? and ip in (?, ?, ?) limit 1",
+                              (title,) + NAMU_AUTHORS).fetchone() is not None
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return True
+
+
 def refresh_button(body, path, queue_db=""):
     """문서 화면에 '나무위키 최신판으로 갱신' 단추를 붙인다(갱신 대기열이 있을 때만).
 
@@ -195,6 +213,8 @@ def refresh_button(body, path, queue_db=""):
         return body
     title = urllib.parse.unquote(path[3:].split("?")[0].split("#")[0])
     if not title or title.startswith(("category:", "틀:")):
+        return body
+    if queue_db and not from_namu(queue_db, title):
         return body
     at = checked_at(queue_db, title) if queue_db else None
     if at:
