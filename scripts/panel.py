@@ -162,12 +162,57 @@ def start_proxy():
     spawn("proxy", args, "proxy.log")
 
 
+def port_owner(port):
+    """그 포트를 듣고 있는 프로세스의 (PID, 실행 파일 경로). 비어 있으면 None. Windows 만(그 밖은 None)."""
+    if not WIN:
+        return None
+    ps = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+          f"$c = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; "
+          "if ($c) { $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $c.OwningProcess); "
+          "Write-Output ([string]$c.OwningProcess + '|' + [string]$p.ExecutablePath) }")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, creationflags=NO_WINDOW, timeout=30)
+        out = r.stdout.decode("utf-8", "replace").strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if "|" not in out:
+        return None
+    pid, path = out.split("|", 1)
+    return int(pid), path.strip()
+
+
+def foreign_port_conflict(ports):
+    """우리 폴더가 아닌 곳의 프로그램이 이 포트들을 쓰고 있으면 안내 글을, 아니면 빈 글을 돌려준다.
+    다른 폴더에서 켠 유어위키가 꺼지지 않은 채 있으면 새 폴더에서 켜도 옛 위키가 보이기 때문이다."""
+    root = os.path.normcase(os.path.abspath(ROOT)) + os.sep
+    for port in ports:
+        owner = port_owner(port)
+        if owner and not os.path.normcase(os.path.abspath(owner[1] or "")).startswith(root):
+            where = owner[1] or f"PID {owner[0]}"
+            return (f"포트 {port} 을(를) 이 폴더가 아닌 프로그램이 쓰고 있습니다: {where}\n"
+                    "다른 폴더에서 켠 유어위키가 꺼지지 않았다면 그쪽 관리판에서 [끄기]를 누르거나 작업 관리자에서 끈 뒤 다시 켜세요. "
+                    "(그대로 두면 이 폴더가 아니라 그 위키가 보입니다)")
+    return ""
+
+
 def start_wiki(open_browser=True):
     with lock:
         if not os.path.exists(os.path.join(WIKI, "data.db")):
             return "아직 설치되지 않았습니다"
         if alive("import"):
             return "가져오는 중입니다. 끝난 뒤에 켜세요"
+        if not alive("engine"):
+            ports = [3001]
+            if not alive("proxy"):
+                try:
+                    ports.append(int(settings()["listen"].rsplit(":", 1)[1]))
+                except (ValueError, IndexError):
+                    pass
+            if settings().get("p2p") and not alive("p2pwin"):
+                ports.append(P2P_PORT)
+            conflict = foreign_port_conflict(ports)
+            if conflict:
+                return conflict
         if not alive("engine"):
             spawn("engine", [ENGINE, "3001", "--localhost"], "server.log", cwd=WIKI)
         if not alive("proxy"):
@@ -346,7 +391,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0"
+KIT_VERSION = "2.0.1"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -842,7 +887,14 @@ def main():
     cleanup_leftovers()
     os.makedirs(IMPORT_DIR, exist_ok=True)  # 가져올 파일을 넣는 곳
     threading.Thread(target=update_loop, daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Handler)
+    except OSError:
+        owner = port_owner(PANEL_PORT)
+        where = (owner[1] or f"PID {owner[0]}") if owner else "알 수 없는 프로그램"
+        print(f"관리판 포트 {PANEL_PORT} 을(를) 이미 쓰고 있습니다: {where}\n"
+              "다른 폴더의 유어위키 관리판이 켜져 있을 수 있습니다. 그쪽 창을 닫거나 작업 관리자에서 끄고 다시 실행하세요.", flush=True)
+        sys.exit(1)
     url = f"http://127.0.0.1:{PANEL_PORT}/"
     print(f"유어위키 관리판: {url}  (끌 때는 관리판에서 [끄기]를 누르세요)", flush=True)
     webbrowser.open(url)
