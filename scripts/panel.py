@@ -279,6 +279,12 @@ def start_wiki(open_browser=True):
             if conflict:
                 return conflict
         if not alive("engine"):
+            try:  # 켤 때마다 표 전체를 읽는 검사를 피하는 색인(없을 때 한 번만 만든다)
+                sys.path.insert(0, SCRIPTS)
+                import fast_start
+                fast_start.ensure(os.path.join(WIKI, "data.db"))
+            except Exception:
+                pass  # 못 만들어도 켜는 데는 지장 없다(조금 느릴 뿐)
             spawn("engine", [ENGINE, "3001", "--localhost"], "server.log", cwd=WIKI)
         if not alive("proxy"):
             start_proxy()
@@ -536,7 +542,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.2"
+KIT_VERSION = "2.0.3"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 

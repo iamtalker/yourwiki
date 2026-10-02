@@ -138,6 +138,9 @@ if (-not $NoExtras) {
 
 
 
+# 켤 때마다 표 전체를 읽는 검사를 피하는 색인(켜는 시간이 수 분 → 1초 안팎)
+& $python (Join-Path $PSScriptRoot 'fast_start.py') (Join-Path $Wiki 'data.db')
+
 # ---------------------------------------------------------------- 5. 검색 색인
 # openNAMU 는 시작할 때 색인이 없으면 만든다. 중간에 끄면 처음부터 다시 만들므로 설치 때 끝낸다.
 Step '5/6 검색 색인 만들기 (문서가 많아 수십 분 걸릴 수 있습니다. 창을 닫지 마세요)'
@@ -147,6 +150,8 @@ if (Test-Path $ver) {
 } else {
     $p = Start-Engine
     $t0 = Get-Date
+    Write-Host '  ※ 지금 main.amd64.exe 가 CPU 를 많이 쓰고 팬이 돌 수 있습니다. 정상이니 끄지 마세요.' -ForegroundColor Yellow
+    Write-Host '    중간에 끄면 색인을 처음부터 다시 만들어야 합니다. 끝나면 저절로 조용해집니다.' -ForegroundColor Yellow
     while (-not (Test-Path $ver)) {
         if ($p.HasExited) { throw '색인을 만드는 중 위키 엔진이 멈췄습니다. 설치.bat 을 다시 실행하세요.' }
         Start-Sleep -Seconds 30
