@@ -205,12 +205,30 @@ def from_namu(queue_db, title):
         return True
 
 
+_badge = {"mtime": None, "on": True}
+
+
+def badge_on():
+    """관리판에서 '최신판 갱신 표시'를 켜 두었는가(panel.json 의 refresh_badge, 기본 켬). 파일이 바뀔 때만 다시 읽는다."""
+    try:
+        mtime = os.path.getmtime(PANEL_JSON)
+    except OSError:
+        return True
+    if mtime != _badge["mtime"]:
+        try:
+            _badge["on"] = json.load(open(PANEL_JSON, encoding="utf-8")).get("refresh_badge", True) is not False
+        except (OSError, ValueError):
+            _badge["on"] = True
+        _badge["mtime"] = mtime
+    return _badge["on"]
+
+
 def refresh_button(body, path, queue_db=""):
     """문서 화면에 '나무위키 최신판으로 갱신' 단추를 붙인다(갱신 대기열이 있을 때만).
 
     24시간 안에 이미 확인한 문서는 단추 대신 '최신 버전' 표시를 보여 준다.
     """
-    if not path.startswith("/w/"):
+    if not path.startswith("/w/") or not badge_on():
         return body
     title = urllib.parse.unquote(path[3:].split("?")[0].split("#")[0])
     if not title or title.startswith(("category:", "틀:")):

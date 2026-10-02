@@ -542,7 +542,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.5"
+KIT_VERSION = "2.0.6"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -652,6 +652,7 @@ def status():
     s = settings()
     st = {"installed": os.path.exists(os.path.join(WIKI, "data.db")), "sync": s["sync"], "listen": s["listen"],
           "color": s.get("color", "#3b5bdb"), "quit_on_close": s.get("quit_on_close", True),
+          "refresh_badge": s.get("refresh_badge", True),
           "running": {n: alive(n) for n in ("engine", "proxy", "updater", "install")}}
     st["ready"] = st["running"]["engine"] and port_open(3001)
     # 위키 엔진이 '켜지는 중'에는 data.db 를 열지 않는다.
@@ -761,6 +762,7 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <label><input type="radio" name="sync" value="auto" onchange="setSync(this.value)"> 자동 따라잡기 (기본)</label>
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
+<label style="font-size:13px"><input type="checkbox" id="refbadge" onchange="api('/api/refresh_badge?on='+(this.checked?1:0))"> 문서 화면에 「🔄 나무위키 최신판으로 갱신」·「✔ 최신 버전」 표시를 보여 주기</label>
 <div id="sync"></div><pre id="ulog"></pre></details>
 <details class="sec" id="sec-p2p" data-default="0"><summary><h2>P2P 공유</h2><span class="sum" id="sum-p2p"></span></summary>
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
@@ -920,6 +922,7 @@ var ia=s.import_audit;document.getElementById('iaudit').innerHTML=(ia.pending||i
 ia.bad.map(b=>'<div style="color:#c00">거짓 내용이 확인되어 되돌린 파일: <b>'+esc(b[0])+'</b> — '+esc(b[1])+'</div>').join('');
 sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
+var rb=document.getElementById('refbadge');if(rb&&document.activeElement!==rb)rb.checked=s.refresh_badge!==false;
 var qc=document.getElementById('quitclose');if(qc&&document.activeElement!==qc)qc.checked=s.quit_on_close!==false;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
 document.querySelectorAll('details.sec').forEach(function(d){
@@ -971,6 +974,10 @@ class Handler(BaseHTTPRequestHandler):
             on = (q.get("on") or ["1"])[0] == "1"
             remember(quit_on_close=on)
             msg = "관리판 창을 닫으면 위키도 " + ("끕니다" if on else "끄지 않습니다(다음에 관리판을 열 때 정리됨)")
+        elif u.path == "/api/refresh_badge":
+            on = (q.get("on") or ["1"])[0] == "1"
+            remember(refresh_badge=on)
+            msg = "문서 화면의 최신판 갱신 표시를 " + ("보여 줍니다" if on else "숨깁니다")
         elif u.path == "/api/color":
             c = (q.get("c") or [""])[0]
             if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
