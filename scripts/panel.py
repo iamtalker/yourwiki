@@ -73,6 +73,32 @@ def remember(**kv):
     save_settings(s)
 
 
+EXT = None  # 내 PC 에서만 쓰는 확장(local_ext/panel_ext.py). 파일이 없으면 아무 일도 하지 않는다.
+
+
+def load_ext():
+    global EXT
+    path = os.path.join(ROOT, "local_ext", "panel_ext.py")
+    if not os.path.exists(path):
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("panel_ext", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.init(sys.modules[__name__])
+        EXT = mod
+    except Exception as e:  # 확장이 고장 나도 관리판은 그대로 뜬다
+        print("확장을 불러오지 못했습니다:", e)
+
+
+def ext_call(name, *args):
+    try:
+        return getattr(EXT, name)(*args) if EXT and hasattr(EXT, name) else None
+    except Exception:
+        return None
+
+
 def alive(name):
     p = procs.get(name)
     return p is not None and p.poll() is None
@@ -542,7 +568,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.8"
+KIT_VERSION = "2.0.9"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -927,6 +953,7 @@ ia.bad.map(b=>'<div style="color:#c00">거짓 내용이 확인되어 되돌린 �
 sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
 sum('badge',(s.refresh_badge!==false?'<b class=on>갱신 표시 켬</b>':'갱신 표시 끔')+(s.hide_missing_images?' · 없는 이미지 숨김':''));
+if(window.extUpdate)extUpdate(s);
 var di=document.getElementById('hideimg');if(di&&document.activeElement!==di)di.checked=!!s.hide_missing_images;
 var rb=document.getElementById('refbadge');if(rb&&document.activeElement!==rb)rb.checked=s.refresh_badge!==false;
 var qc=document.getElementById('quitclose');if(qc&&document.activeElement!==qc)qc.checked=s.quit_on_close!==false;
@@ -958,9 +985,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/api/status"):
             _bye["t"] = 0.0  # 창이 다시 열렸거나 새로 고침 — 닫힘 신호를 취소한다
         if path == "/":
-            return self.send(200, PAGE, "text/html; charset=utf-8")
+            html = ext_call("html") or ""
+            return self.send(200, PAGE.replace('<details class="sec" id="sec-p2p"', html + '<details class="sec" id="sec-p2p"', 1),
+                             "text/html; charset=utf-8")
         if path == "/api/status":
-            return self.send(200, json.dumps(status(), ensure_ascii=False), "application/json")
+            st = status()
+            st.update(ext_call("status") or {})
+            return self.send(200, json.dumps(st, ensure_ascii=False), "application/json")
         self.send(404, "없음", "text/plain; charset=utf-8")
 
     def do_POST(self):
@@ -988,6 +1019,8 @@ class Handler(BaseHTTPRequestHandler):
             on = (q.get("on") or ["0"])[0] == "1"
             remember(hide_missing_images=on)
             msg = "없는 이미지 자리를 " + ("숨깁니다" if on else "원래대로 「(파일:이름)」 글자로 보여 줍니다")
+        elif (ext_msg := ext_call("handle", u.path, q)) is not None:
+            msg = ext_msg
         elif u.path == "/api/color":
             c = (q.get("c") or [""])[0]
             if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
@@ -1081,6 +1114,7 @@ def close_watcher(srv):
 
 def main():
     kill_children_on_exit()
+    load_ext()
     cleanup_leftovers()
     os.makedirs(IMPORT_DIR, exist_ok=True)  # 가져올 파일을 넣는 곳
     threading.Thread(target=update_loop, daemon=True).start()

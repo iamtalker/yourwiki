@@ -243,6 +243,34 @@ def hide_missing_images(body):
     return NOIMG_LABEL_RE.sub("", NOIMG_RE.sub("", body))
 
 
+EXT = None  # 내 PC 에서만 쓰는 확장(local_ext/proxy_ext.py). 파일이 없으면 아무 일도 하지 않는다.
+
+
+def load_ext():
+    global EXT
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_ext", "proxy_ext.py")
+    if not os.path.exists(path):
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("proxy_ext", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.init(sys.modules[__name__])
+        EXT = mod
+    except Exception as e:  # 확장이 고장 나도 중계 서버는 그대로 동작한다
+        print("확장을 불러오지 못했습니다:", e)
+
+
+def ext_decorate(body, path, queue_db):
+    if EXT is None:
+        return body
+    try:
+        return EXT.decorate(body, path, queue_db)
+    except Exception:
+        return body
+
+
 def refresh_button(body, path, queue_db=""):
     """문서 화면에 '나무위키 최신판으로 갱신' 단추를 붙인다(갱신 대기열이 있을 때만).
 
@@ -452,7 +480,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if "text/html" in ctype:
             data = rewrite_html(data.decode("utf-8", "replace"))
             if self.queue_db:
-                data = add_suggest(refresh_button(hide_missing_images(data), self.path, self.queue_db))
+                data = add_suggest(refresh_button(hide_missing_images(ext_decorate(data, self.path, self.queue_db)), self.path, self.queue_db))
             data = data.encode("utf-8")
         self.send_response(resp.status, resp.reason)
         for k, v in resp.getheaders():
@@ -489,6 +517,7 @@ def main():
     uhost, uport = args.upstream.rsplit(":", 1)
     Handler.upstream = (uhost, int(uport))
     Handler.queue_db = args.queue_db
+    load_ext()
     Handler.cdn_dir = os.path.join(os.path.abspath(args.assets_dir), "cdn")
     with open(os.path.join(args.assets_dir, "icons.json"), encoding="utf-8") as f:
         ICONS.update(json.load(f))
