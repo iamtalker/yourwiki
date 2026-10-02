@@ -131,7 +131,6 @@ Docker 는 `kit/` 안의 `Dockerfile`·`docker-compose.yml` 로 `kit/` 을 이�
 
 ### 2026-10-03 (2.1.1)
 - 루트 `README.md` 에 「설치와 새 판으로 올리기」(덮어쓰기 방식, 압축 파일에 `wiki`·설정·tools·data·import·export 가 없음을 `git archive` 로 확인), `kit/README.md`·관리판 문구 동기화.
-- **주의: 저장소 최상위의 `.gitignore`·`.gitattributes`·`README.md`·`LICENSE`·`CLAUDE.md`·`AGENTS.md` 는 사용자 PC 에서 탐색기 숨김 속성이 걸려 있다**(주인이 폴더를 깔끔하게 보려고). 윈도우는 숨김 파일 쓰기를 거부하므로 고치기 전에 `attrib -h` 로 풀고, 끝나면 `attrib +h` 로 다시 건다.
 
 ### 2026-10-03 (2.1.0)
 - **폴더 구조 변경**(주인 요청: 사용자는 `wiki` 폴더만 옮기면 되게, 최상위는 실행 파일·wiki·폴더 1개만): 3번 절의 「폴더 구조」 참고. 코드 변경 요점:
