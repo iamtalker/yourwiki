@@ -120,7 +120,8 @@ def theme_css():
                          f"header#main a:hover,header a#logo:hover,.top_cel a:hover{{background-color:{darker(color)}!important}}"
                          "header#section{background-color:#fff}"
                          ".top_cel_in{background:#fff!important;border:1px solid #ddd;box-shadow:0 4px 12px rgba(0,0,0,.12)}"
-                         ".top_cel_in a{color:#222!important}.top_cel_in a:hover{background-color:#eef!important}"
+                         "header#main .top_cel_in a{color:#222!important}"  # 위의 header#main a(흰색)보다 세야 한다
+                         "header#main .top_cel_in a:hover{background-color:#eef!important;color:#222!important}"
                          f".kit-badge{{background:{color}!important}}"
                          f"#nav_bar{{background-color:{color}!important}}#nav_bar a{{color:#fff!important}}"
                          f"button.search_button,button.search_button:hover{{background:{color}!important;color:#fff!important}}"
