@@ -39,8 +39,13 @@
       "sources": [
         {
           "type": "http",
+          "url": "https://archive.org/download/yourwiki-namumark-20260829-build20261002.7z/yourwiki-namumark-20260829-build20261002.7z",
+          "note": "archive.org (기본). 안 되면 아래 Hugging Face 로 넘어간다"
+        },
+        {
+          "type": "http",
           "url": "https://huggingface.co/datasets/iamtalker/yourwiki-namumark-20260829/resolve/main/yourwiki-namumark-20260829-build20261002.7z",
-          "note": "Hugging Face (SHA-256 확인 후 이 줄을 유지, archive.org 에 올라가면 위에 추가)"
+          "note": "Hugging Face (같은 파일, 예비)"
         }
       ],
       "sha256": "62ede50c50de56666f5cda0988244eb6a7e09c3f70f7138353b1bb26bd7b7c9d",

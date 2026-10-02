@@ -104,7 +104,7 @@
 - [x] "문서 ?개" 표시 고침(2026-09-29)
 - [x] Cloudflare 의존 줄이기: 직접 연결(UPnP·공인 IP·IPv6) 선택 사항(2026-09-29)
 
-## 6-1. 틀 되접기(2.0) — 완료, archive.org 업로드만 남음
+## 6-1. 틀 되접기(2.0) — 완료(archive.org·Hugging Face 업로드 끝)
 
 2.0 데이터 판(`yourwiki-namumark-20260829-build20261002.7z`, 5,346,221,800바이트, SHA-256 62ede50c…b7c9d, MD5 4e2a2fdd…70df)을 Hugging Face 에 올렸고(`sources.json` 이 가리킴) 새 폴더 종단 시험까지 통과했다(GitHub 릴리스 zip → 새 폴더 → 설치 → 켜기 → 되접힌 문서 30개 렌더링 정상, 총 문서 1,809,505개).
 계획·결정·검증 기록은 `refold/PLAN.md`(기록용 사본; 작업 폴더 `C:/claude program/나무위키 포크 키트/refold/` 에서 스크립트가 돈다).
