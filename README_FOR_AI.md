@@ -114,6 +114,9 @@
 
 ## 7. 작업 기록 (새 항목을 위에 덧붙인다)
 
+### 2026-10-03 (2.0.7)
+- 관리판에 「문서 화면 표시」 칸(`sec-badge`)을 따로 둠(체크박스 `refbadge`, 글자 16px, 기본 펼침). 상태 줄 「데이터 ?판」: `info()` 가 `edition.json` 을 `utf-8` 로 읽어 BOM(PowerShell `Out-File -Encoding utf8` 이 붙임)에서 실패 → `utf-8-sig`. **PowerShell 이 쓴 JSON 은 항상 `utf-8-sig` 로 읽는다.**
+
 ### 2026-10-03 (2.0.6)
 - 문서 화면의 갱신 단추·「최신 버전」 배지를 켜고 끄는 설정 `refresh_badge`(기본 켬): 관리판 체크박스 → `POST /api/refresh_badge?on=0|1` → `panel.json`. 중계 서버가 `badge_on()` 으로 파일이 바뀔 때만 다시 읽어 즉시 반영한다. (관리판 API 는 POST 만 받는다 — GET 으로 시험하면 404 `없음`.) 애니위키에는 나무위키 동기화가 없어 해당 없음.
 

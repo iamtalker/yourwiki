@@ -542,7 +542,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.6"
+KIT_VERSION = "2.0.7"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -574,7 +574,7 @@ def info():
     m = re.search(r"/download/([^/]+)/", src["tools"]["opennamu"]["url"])
     edition = {}
     try:
-        edition = json.load(open(os.path.join(WIKI, "edition.json"), encoding="utf-8"))
+        edition = json.load(open(os.path.join(WIKI, "edition.json"), encoding="utf-8-sig"))
     except (OSError, ValueError):
         pass
     gb = lambda n: round(n / 1e9, 1)  # noqa: E731
@@ -762,8 +762,10 @@ h2{font-size:16px;margin:0 0 8px}button{font-size:14px;padding:6px 12px;margin:2
 <label><input type="radio" name="sync" value="auto" onchange="setSync(this.value)"> 자동 따라잡기 (기본)</label>
 <p style="font-size:13px;color:#555">robots.txt 준수 · 6초에 1건 이하 · 캡차·차단 감지 시 즉시 중단 · 같은 문서는 24시간에 한 번.
 문서 화면의 「🔄 나무위키 최신판으로 갱신」 단추로 요청할 수 있습니다.</p>
-<label style="font-size:13px"><input type="checkbox" id="refbadge" onchange="api('/api/refresh_badge?on='+(this.checked?1:0))"> 문서 화면에 「🔄 나무위키 최신판으로 갱신」·「✔ 최신 버전」 표시를 보여 주기</label>
 <div id="sync"></div><pre id="ulog"></pre></details>
+<details class="sec" id="sec-badge" data-default="1" open><summary><h2>문서 화면 표시</h2><span class="sum" id="sum-badge"></span></summary>
+<label style="font-size:16px"><input type="checkbox" id="refbadge" onchange="api('/api/refresh_badge?on='+(this.checked?1:0)).then(load)"> 문서 화면 왼쪽 아래에 「🔄 나무위키 최신판으로 갱신」·「✔ 최신 버전」 표시 보이기</label>
+<p style="font-size:13px;color:#555">끄면 문서 화면에 아무 표시도 붙지 않습니다(바로 적용). 동기화 설정과는 별개이며 표시만 숨깁니다.</p></details>
 <details class="sec" id="sec-p2p" data-default="0"><summary><h2>P2P 공유</h2><span class="sum" id="sum-p2p"></span></summary>
 <label><input type="radio" name="p2p" value="0" onchange="api('/api/p2p?on=0').then(load)"> 끄기 (기본)</label>
 <label><input type="radio" name="p2p" value="1" onchange="api('/api/p2p?on=1').then(load)"> 켜기</label>
@@ -922,6 +924,7 @@ var ia=s.import_audit;document.getElementById('iaudit').innerHTML=(ia.pending||i
 ia.bad.map(b=>'<div style="color:#c00">거짓 내용이 확인되어 되돌린 파일: <b>'+esc(b[0])+'</b> — '+esc(b[1])+'</div>').join('');
 sum('import',s.running.import?'<b>가져오는 중</b>':(s.import_files.length?'파일 '+s.import_files.length+'개':''));
 document.getElementById('swatch').style.background=s.color;document.getElementById('picker').value=s.color;
+sum('badge',s.refresh_badge!==false?'<b class=on>켬</b>':'끔');
 var rb=document.getElementById('refbadge');if(rb&&document.activeElement!==rb)rb.checked=s.refresh_badge!==false;
 var qc=document.getElementById('quitclose');if(qc&&document.activeElement!==qc)qc.checked=s.quit_on_close!==false;
 document.getElementById('pubinfo').innerHTML=s.public_url?('공개 주소: <a href="'+s.public_url+'" target=_blank>'+s.public_url+'</a>'):(s.running.tunnel?'공개 주소를 만드는 중…':'')}
