@@ -585,7 +585,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.1.0"
+KIT_VERSION = "2.1.1"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -892,7 +892,7 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 <button onclick="api('/api/update_check').then(load)">지금 확인</button>
 <div id="updst" style="font-size:13px;color:#555;margin-top:6px"></div>
 <p style="font-size:12px;color:#777">12시간에 한 번 GitHub(iamtalker/yourwiki)의 최신 릴리스만 확인합니다. 보내는 정보는 없고, 스스로 설치하지 않습니다.
-새 판은 릴리스 zip 을 받아 <code>kit</code> 폴더와 <code>유어위키.exe</code> 만 바꾸세요(<code>wiki</code> 폴더는 그대로 두면 됩니다. 새 판의 <code>kit</code> 안 <code>data</code>·<code>import</code>·<code>export</code> 는 옛 것을 옮기면 됩니다).</p></details>
+새 판은 위키를 끈 뒤 릴리스 zip 을 지금 쓰는 폴더에 풀면서 <b>덮어쓰기</b> 하면 됩니다(<code>wiki</code> 폴더와 설정은 zip 에 없어서 그대로 남습니다).</p></details>
 <details class="sec" id="sec-install" data-default="0"><summary><h2>설치 · 데이터</h2><span class="sum" id="sum-install"></span></summary>
 <button onclick="install('2026')">설치 / 다시 설치</button>
 <p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="inslog"></pre></details>
