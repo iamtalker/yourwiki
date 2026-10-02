@@ -15,7 +15,7 @@ $ProgressPreference = 'SilentlyContinue'
 $Root  = Split-Path $PSScriptRoot -Parent
 $Tools = Join-Path $Root 'tools'
 $Data  = Join-Path $Root 'data'
-$Wiki  = Join-Path $Root 'wiki'
+$Wiki  = Join-Path (Split-Path $Root -Parent) 'wiki'   # 위키는 키트(kit) 폴더 밖, 유어위키.exe 옆에 둔다
 $cfg   = Get-Content (Join-Path $Root 'sources.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 New-Item -ItemType Directory -Force $Tools, $Data, $Wiki | Out-Null
 
@@ -33,18 +33,22 @@ function Get-Verified($url, $out, $sha256) {
 Step '1/6 도구 준비 (파이썬, 7zr, aria2, openNAMU)'
 $t = $cfg.tools
 $pyZip = Join-Path $Tools 'python.zip'
-Get-Verified $t.python.url $pyZip $t.python.sha256
 $python = Join-Path $Tools 'python\python.exe'
-if (-not (Test-Path $python)) { Expand-Archive $pyZip (Join-Path $Tools 'python') -Force }
+if (-not (Test-Path $python)) {   # 압축 파일은 풀 때만 받고, 풀고 나면 지운다
+    Get-Verified $t.python.url $pyZip $t.python.sha256
+    Expand-Archive $pyZip (Join-Path $Tools 'python') -Force
+    Remove-Item $pyZip -Force -ErrorAction SilentlyContinue
+}
 
 $sevenZip = Join-Path $Tools '7zr.exe'
 Get-Verified $t.'7zr'.url $sevenZip $t.'7zr'.sha256
 
 $ariaZip = Join-Path $Tools 'aria2.zip'
-Get-Verified $t.aria2.url $ariaZip $t.aria2.sha256
 $aria = Get-ChildItem (Join-Path $Tools 'aria2') -Recurse -Filter aria2c.exe -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $aria) {
+    Get-Verified $t.aria2.url $ariaZip $t.aria2.sha256
     Expand-Archive $ariaZip (Join-Path $Tools 'aria2') -Force
+    Remove-Item $ariaZip -Force -ErrorAction SilentlyContinue
     $aria = Get-ChildItem (Join-Path $Tools 'aria2') -Recurse -Filter aria2c.exe | Select-Object -First 1
 }
 $aria = $aria.FullName
@@ -95,7 +99,7 @@ Write-Host '  검증 완료 (해시 일치)'
 
 # ---------------------------------------------------------------- 3. openNAMU 초기화
 Step '3/6 위키 엔진 초기화'
-$Port = 3001   # openNAMU 내부 포트 (시작.bat 은 중계 서버를 3000 에 띄움)
+$Port = 3001   # openNAMU 내부 포트 (관리판이 중계 서버를 3000 에 띄움)
 function Wait-Server($sec) {
     foreach ($i in 1..$sec) {
         if ($(try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', $Port); $c.Close(); $true } catch { $false })) { return $true }
@@ -153,7 +157,7 @@ if (Test-Path $ver) {
     Write-Host '  ※ 지금 main.amd64.exe 가 CPU 를 많이 쓰고 팬이 돌 수 있습니다. 정상이니 끄지 마세요.' -ForegroundColor Yellow
     Write-Host '    중간에 끄면 색인을 처음부터 다시 만들어야 합니다. 끝나면 저절로 조용해집니다.' -ForegroundColor Yellow
     while (-not (Test-Path $ver)) {
-        if ($p.HasExited) { throw '색인을 만드는 중 위키 엔진이 멈췄습니다. 설치.bat 을 다시 실행하세요.' }
+        if ($p.HasExited) { throw '색인을 만드는 중 위키 엔진이 멈췄습니다. 유어위키.exe 를 열어 [설치]를 다시 누르세요.' }
         Start-Sleep -Seconds 30
         Write-Host ("  진행 중... {0:N0}분 경과" -f ((Get-Date) - $t0).TotalMinutes)
     }
@@ -163,5 +167,5 @@ if (Test-Path $ver) {
 
 # ---------------------------------------------------------------- 6. 끝
 Step '6/6 설치 완료'
-Write-Host '  시작.bat 을 더블클릭하면 위키가 열립니다.'
+Write-Host '  유어위키.exe 를 더블클릭하면 관리판이 열립니다. [켜기]를 누르세요.'
 Write-Host '  ※ 이 데이터는 CC BY-NC-SA 2.0 KR입니다. 상업적 이용은 금지됩니다. 이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다.' -ForegroundColor Yellow

@@ -31,6 +31,21 @@
 
 ## 3. 구조 한눈에
 
+**폴더 구조(2.1 부터)**: 사용자에게 보이는 최상위에는 세 가지만 둔다.
+```
+유어위키.exe          실행 파일(관리판을 창 없이 띄움). 소스는 kit/launcher/Launcher.cs, 빌드 kit/launcher/build.ps1(윈도우 기본 csc)
+서버설치가이드.html   리눅스 서버용 안내(웹 페이지)
+wiki/                 위키 데이터(설치하면 생김). 옮기거나 백업할 때는 이 폴더만. 저장소에는 없음(.gitignore)
+kit/                  나머지 전부: scripts/ server/ docker/ assets/ extras/ tests/ tools/(받음) data/(받음) import/ export/
+                      panel.json 로그들 sources.json README.md CHANGELOG.md README_FOR_AI.md NOTICE.md LICENSE 등
+```
+저장소 최상위에는 위에 더해 `README.md`(GitHub 첫 화면용 짧은 안내)·`CLAUDE.md`·`AGENTS.md`·`LICENSE`·`.gitignore`·`.gitattributes` 가 있고,
+`.gitattributes` 의 `export-ignore` 로 **배포 zip 에서는 빠진다**(zip 최상위는 위 세 가지만).
+**이 문서의 상대 경로는 `kit/` 기준이다**(예: `scripts/` = `kit/scripts/`). 예외는 `wiki/`(최상위). 코드에서는 `panel.py` 의 `ROOT`=kit, `TOP`=최상위, `WIKI`=`TOP/wiki`.
+리눅스 스크립트는 kit/wiki 를 최상위 wiki 로 잇는 링크를 만들어 쓴다(`kit/wiki` 가 이미 폴더이면 그대로 — Docker 볼륨).
+Docker 는 `kit/` 안의 `Dockerfile`·`docker-compose.yml` 로 `kit/` 을 이미지에 넣는다(컨테이너 안은 예전처럼 평평한 `/kit`).
+시험·pyflakes 같은 명령은 **kit 폴더에서** 돌린다.
+
 | 포트 | 무엇 | 파일 |
 |---|---|---|
 | 3100 | 관리판(127.0.0.1 전용) | `scripts/panel.py` (HTML·JS 가 파일 안 `PAGE` 문자열에 있음) |
@@ -40,7 +55,7 @@
 
 - 데이터: `wiki/data.db`(openNAMU SQLite: data, history, data_set, back, other), `wiki/updater.db`(갱신기·P2P 상태), `wiki/p2p_key.json`(내 ID 열쇠).
 - 설치: Windows `scripts/install.ps1`, 리눅스 `server/install.sh`, Docker `Dockerfile`·`docker/entrypoint.sh`. 받을 곳과 해시는 `sources.json`(위에서부터 차례로 시도).
-- 켜기·끄기: Windows 는 관리판(`유어위키.bat` → `panel_launch.ps1` → `panel.py`), 리눅스 `server/yourwiki.sh start|stop|status|install-service`.
+- 켜기·끄기: Windows 는 관리판(`유어위키.exe` → `kit/tools/python/python.exe kit/scripts/panel.py`, 도구가 없을 때만 `panel_launch.ps1`), 리눅스 `server/yourwiki.sh start|stop|status|install-service`.
 - 갱신기 `scripts/updater.py`: 나무위키 최신판을 따라잡는다(대기열 `queue`, 모드 auto/queue/off).
 - 내보내기 `scripts/convert_wiki.py`: 나무마크 → MediaWiki / DokuWiki / Markdown (멀티프로세스).
 - 유어위키(openNAMU) 형식 내보내기·가져오기 `scripts/wiki_pack.py`: data·history·data_set·back 표만 담은 SQLite.
@@ -114,6 +129,14 @@
 
 ## 7. 작업 기록 (새 항목을 위에 덧붙인다)
 
+### 2026-10-03 (2.1.0)
+- **폴더 구조 변경**(주인 요청: 사용자는 `wiki` 폴더만 옮기면 되게, 최상위는 실행 파일·wiki·폴더 1개만): 3번 절의 「폴더 구조」 참고. 코드 변경 요점:
+  `panel.py` 의 `ROOT`(kit)/`TOP`(최상위)/`WIKI`(TOP/wiki), "다른 폴더 위키·남은 프로세스" 판단은 모두 `TOP` 기준(`kit_top()` 이 새·옛 구조를 모두 알아봄, 엔진은 TOP/wiki, 파이썬은 TOP/kit/tools 에 있기 때문),
+  `install.ps1`·`start.ps1`·`stop.ps1` 의 `$Wiki`, 리눅스 `install.sh`·`yourwiki.sh` 는 `kit/wiki` → 최상위 wiki 링크, 개인 확장(`local_ext`)의 받는 프로그램도 `dirname(ROOT)/wiki`.
+- `유어위키.exe`: C# 작은 실행기(`kit/launcher`). 파이썬이 있으면 창 없이 `panel.py`, 없으면 `panel_launch.ps1`(창 있음). `.ico` 는 순수 파이썬으로 그림(Pillow 없음). 최상위의 exe 는 저장소에 올린다(`*.exe binary`).
+- 배포 zip 은 `git archive` + `.gitattributes` 의 `export-ignore`(저장소 전용 파일·`kit/tests`·`kit/refold`·`kit/README_FOR_AI.md`)로 최상위를 exe·html·kit 만 남긴다. **zip 을 만든 뒤 반드시 풀어서 최상위 목록을 확인한다.**
+- 시험은 kit 폴더에서: `PYTHONUTF8=1 tools/python/python.exe tests/run_all.py`.
+
 ### 2026-10-03 (2.0.10)
 - 검색창 엔터: `LAYOUT_JS` 가 단추를 돋보기 → 화살표로 DOM 순서까지 바꿔서, 엔터(폼의 첫 제출 단추 = 암묵적 제출)가 `/search` 가 되었다. 돋보기 단추의 `click` 이 `detail===0`(키보드 제출)이고 입력창이 포커스면 `requestSubmit(goto 단추)` 로 보낸다. 서버 `/goto` 는 있는 문서면 `/w/`, 없으면 `/search/`(파이썬으로 UTF-8 POST 해서 확인; git-bash curl 은 한글을 cp949 로 보내므로 시험에 쓰지 말 것).
 - `main()` 에서 `load_ext()` 를 `cleanup_leftovers()` 뒤로: 후자가 이 폴더의 `python.exe` 를 전부 끄므로 확장이 켠 프로세스가 같이 죽었다.
@@ -141,7 +164,7 @@
 - **켜는 시간 단축**: openNAMU(v4.3.6-beta.2)는 `DB_make` 에서 켤 때마다 모든 열에 `count(*) … where 열 is null` 을 돌려 `data` 표를 열 3개만큼 통째로 읽었다(시작 때 14GB). `scripts/fast_start.py` 가 `where 열 is null` 부분 색인(`nullchk_표_열`, 표: data·history·back·data_set)을 만들어 피한다. 엔진 열림 37초 → 0.6초.
   설치(`install.ps1`, 색인 단계 앞)와 관리판 [켜기](`start_wiki`)에서 호출한다. 엔진이 꺼져 있을 때만 쓴다(쓰기 잠금). 애니위키에는 아직 옮기지 않음(엔진 구성이 다름, 데이터가 작음).
 - 설치 색인 단계에 "CPU 많이 쓰는 건 정상, 끄지 마세요" 안내. 이유: 개발 PC 에서 팬 소리에 엔진을 꺼서 색인이 처음부터 다시 만들어졌다(색인은 이어 만들 수 없다).
-- 배운 점: 장시간 대기는 "프로세스 종료"가 아니라 결과(`dataleve.version`, 로그의 `index built`)를 보고 건다. 엔진은 색인이 끝나도 계속 떠 있다. 관리판을 `--no-browser` 로 띄우면 창이 없다고 보고 위키를 끄고 종료한다(켤 때는 `유어위키.bat`).
+- 배운 점: 장시간 대기는 "프로세스 종료"가 아니라 결과(`data\bleve.version`, 로그의 `index built`)를 보고 건다. 엔진은 색인이 끝나도 계속 떠 있다. 관리판을 `--no-browser` 로 띄우면 창이 없다고 보고 위키를 끄고 종료한다(켤 때는 `유어위키.bat`).
 
 ### 2026-09-29 (6)
 - 형제 프로젝트 **애니위키 키트**(`iamtalker/anywiki-kit`)를 만듦: 이 저장소 1.2 에서 나무위키 전용 기능(데이터·동기화·P2P·중계소·가져오기 검증)을 뺀 범용판.

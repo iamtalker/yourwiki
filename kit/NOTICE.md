@@ -1,6 +1,6 @@
 # 라이선스와 출처 (NOTICE)
 
-- **키트 코드**(`scripts/`, `유어위키.bat`): MIT License (`LICENSE`).
+- **키트 코드**(`kit/scripts/`, `유어위키.exe` 와 그 소스 `kit/launcher/`): MIT License (`LICENSE`).
 - **나무위키 문서 데이터**(설치 때 받는 덤프, `extras/`의 틀): **CC BY-NC-SA 2.0 KR**. 저작권은 각 기여자에게 있습니다.
   상업적 이용은 금지되며, 이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다.
   - `extras/1_namu_templates_200302.jsonl.gz`: 나무위키 2020-03-02 공식 덤프의 틀

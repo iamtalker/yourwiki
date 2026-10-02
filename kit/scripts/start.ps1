@@ -1,10 +1,10 @@
 ﻿param([string]$Listen = '127.0.0.1:3000')   # 인터넷 공개: -Listen 0.0.0.0:3000
 $Root   = Split-Path $PSScriptRoot -Parent
-$Wiki   = Join-Path $Root 'wiki'
+$Wiki   = Join-Path (Split-Path $Root -Parent) 'wiki'   # 위키는 키트(kit) 폴더 밖, 유어위키.exe 옆
 $exe    = Join-Path $Wiki 'main.amd64.exe'
 $python = Join-Path $Root 'tools\python\python.exe'
 if (-not (Test-Path (Join-Path $Wiki 'data.db'))) {
-    Write-Host '아직 설치되지 않았습니다. 설치.bat 을 먼저 실행하세요.'
+    Write-Host '아직 설치되지 않았습니다. 유어위키.exe 를 열어 [설치]를 먼저 누르세요.'
     Read-Host '엔터를 누르면 닫힙니다'
     exit 1
 }

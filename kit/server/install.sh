@@ -10,6 +10,11 @@ set -euo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 EDITION="${1:-}"
 cd "$KIT"
+
+# 위키는 kit 밖(최상위의 wiki)에 둔다. 아래 스크립트는 kit 기준 상대 경로 wiki/ 를 쓰므로 kit/wiki 를 그곳으로 이어 준다.
+# (kit/wiki 가 이미 폴더이면 — 도커 볼륨, 옛 설치 — 그대로 쓴다)
+TOP="$(cd "$KIT/.." && pwd)"
+if [ ! -e "$KIT/wiki" ]; then mkdir -p "${WIKI_DIR:-$TOP/wiki}"; ln -s "${WIKI_DIR:-$TOP/wiki}" "$KIT/wiki"; fi
 step() { printf '\n== %s\n' "$*"; }
 die() { echo "오류: $*" >&2; exit 1; }
 

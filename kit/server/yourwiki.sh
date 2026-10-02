@@ -20,6 +20,11 @@
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$KIT"
+
+# 위키는 kit 밖(최상위의 wiki)에 둔다. 아래 스크립트는 kit 기준 상대 경로 wiki/ 를 쓰므로 kit/wiki 를 그곳으로 이어 준다.
+# (kit/wiki 가 이미 폴더이면 — 도커 볼륨, 옛 설치 — 그대로 쓴다)
+TOP="$(cd "$KIT/.." && pwd)"
+if [ ! -e "$KIT/wiki" ]; then mkdir -p "${WIKI_DIR:-$TOP/wiki}"; ln -s "${WIKI_DIR:-$TOP/wiki}" "$KIT/wiki"; fi
 CONF="$KIT/yourwiki.conf"
 VARS=(LISTEN SYNC P2P P2P_OPEN P2P_FRIENDS P2P_URL P2P_HUBS UPDATE_NOTICE HUB)
 # 기억해 둔 설정 읽기(이번에 직접 준 값이 우선). source 하지 않고 KEY=값 줄만 읽는다

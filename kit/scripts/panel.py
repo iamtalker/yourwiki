@@ -22,8 +22,9 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 임베디드 파이썬은 스크립트 폴더를 path에 넣지 않음
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(SCRIPTS)
-WIKI = os.path.join(ROOT, "wiki")
+ROOT = os.path.dirname(SCRIPTS)  # 키트(kit) 폴더: 프로그램·도구·설정·기록이 있다
+TOP = os.path.dirname(ROOT)      # 사용자가 보는 폴더: 유어위키.exe, wiki, kit
+WIKI = os.path.join(TOP, "wiki")  # 위키 데이터는 kit 밖에 둔다(이 폴더만 옮기면 위키가 그대로 따라간다)
 PANEL_PORT = 3100
 SETTINGS = os.path.join(ROOT, "panel.json")
 WIN = os.name == "nt"
@@ -211,21 +212,37 @@ def port_owner(port):
 KIT_SCRIPT = re.compile(r"([A-Za-z]:[\\/][^\"]*?)[\\/]scripts[\\/](?:offline_proxy|updater|p2p|hub_server|panel)\.py", re.I)
 
 
+def kit_top(d):
+    """폴더 d 가 유어위키 폴더이면 사용자가 보는 폴더(최상위)를, 아니면 None.
+    새 구조는 최상위\\kit\\scripts\\panel.py, 옛 구조(2.0 이하)는 최상위\\scripts\\panel.py 이다."""
+    if not d:
+        return None
+    if os.path.exists(os.path.join(d, "kit", "scripts", "panel.py")) and os.path.exists(os.path.join(d, "kit", "sources.json")):
+        return d
+    if os.path.exists(os.path.join(d, "scripts", "panel.py")) and os.path.exists(os.path.join(d, "sources.json")):
+        # 이 폴더가 kit 이면(새 구조) 그 위가 최상위
+        if os.path.basename(os.path.normpath(d)).lower() == "kit" and any(os.path.exists(os.path.join(os.path.dirname(d), n)) for n in ("유어위키.exe", "유어위키.bat")):
+            return os.path.dirname(os.path.normpath(d))
+        return d
+    return None
+
+
 def other_kit_root(owner):
-    """포트 주인이 '다른 폴더의 유어위키 프로그램'으로 확인되면 그 폴더(루트)를, 아니면 None.
-    확인 방법: 실행 파일에서 위로 올라가며 scripts/panel.py 와 sources.json 이 있는 폴더를 찾거나, 명령줄이 이 키트의 스크립트를 가리킴."""
+    """포트 주인이 '다른 폴더의 유어위키 프로그램'으로 확인되면 그 폴더(최상위)를, 아니면 None.
+    확인 방법: 실행 파일에서 위로 올라가며 유어위키 폴더를 찾거나, 명령줄이 이 키트의 스크립트를 가리킴."""
     pid, exe, cmd = owner
     d = os.path.dirname(exe or "")
-    for _ in range(4):
-        if d and os.path.exists(os.path.join(d, "scripts", "panel.py")) and os.path.exists(os.path.join(d, "sources.json")):
-            return d
+    for _ in range(5):
+        top = kit_top(d)
+        if top:
+            return top
         parent = os.path.dirname(d)
         if parent == d:
             break
         d = parent
     m = KIT_SCRIPT.search(cmd or "")
-    if m and os.path.exists(os.path.join(m.group(1), "scripts", "panel.py")):
-        return m.group(1)
+    if m:
+        return kit_top(m.group(1))
     return None
 
 
@@ -238,7 +255,7 @@ def kit_busy(root):
     if not WIN:
         return False
     ps = ("$root = '" + os.path.abspath(root).replace("'", "''") + "'; "
-          r"$pat = [regex]::Escape($root + '\scripts\') + '(install\.ps1|import_dump\.py|wiki_pack\.py|export_dump\.py|convert_wiki\.py|build_2026\.py)'; "
+          r"$pat = [regex]::Escape($root + '\') + '(kit\\)?scripts\\(install\.ps1|import_dump\.py|wiki_pack\.py|export_dump\.py|convert_wiki\.py|build_2026\.py)'; "
           r"@(Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(powershell|pwsh|python|pythonw)\.exe$' -and "
           r"$_.CommandLine -and $_.ProcessId -ne $PID -and $_.CommandLine -match $pat }).Count")
     try:
@@ -257,10 +274,10 @@ def free_ports_from_other_kits(ports):
         if not owner:
             continue
         root = other_kit_root(owner)
-        if root and not same_dir(root, ROOT) and kit_busy(root):
+        if root and not same_dir(root, TOP) and kit_busy(root):
             print(f"다른 폴더의 유어위키({root})가 설치·가져오기 같은 작업 중이라 끄지 않습니다", flush=True)
             continue
-        if root and not same_dir(root, ROOT) and os.path.normcase(os.path.abspath(root)) not in killed:
+        if root and not same_dir(root, TOP) and os.path.normcase(os.path.abspath(root)) not in killed:
             print(f"다른 폴더의 유어위키({root})가 포트 {port} 을(를) 쓰고 있어 먼저 끕니다", flush=True)
             sweep_wiki_processes(root, include_panel=True)
             killed.add(os.path.normcase(os.path.abspath(root)))
@@ -274,7 +291,7 @@ def free_ports_from_other_kits(ports):
 def foreign_port_conflict(ports):
     """우리 폴더가 아닌 곳의 프로그램이 이 포트들을 쓰고 있으면 안내 글을, 아니면 빈 글을 돌려준다.
     다른 폴더에서 켠 유어위키가 꺼지지 않은 채 있으면 새 폴더에서 켜도 옛 위키가 보이기 때문이다."""
-    root = os.path.normcase(os.path.abspath(ROOT)) + os.sep
+    root = os.path.normcase(os.path.abspath(TOP)) + os.sep  # 엔진은 wiki(최상위 아래), 파이썬은 kit(최상위 아래)에 있다
     for port in ports:
         owner = port_owner(port)
         if owner and not os.path.normcase(os.path.abspath(owner[1] or "")).startswith(root):
@@ -337,7 +354,7 @@ def sweep_wiki_processes(root=None, include_panel=False):
     설치·가져오기·내보내기 같은 작업의 프로세스는 건드리지 않는다(명령줄로 구분). include_panel 이면 그 폴더의 관리판도 끈다."""
     if not WIN:
         return
-    root = os.path.abspath(root or ROOT)
+    root = os.path.abspath(root or TOP)
     pat = r"offline_proxy\.py|updater\.py|p2p\.py|hub_server\.py" + (r"|panel\.py" if include_panel else "")
     ps = ("$root = '" + root.replace("'", "''") + "'; "
           "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne " + str(os.getpid()) + " -and "
@@ -568,7 +585,7 @@ def tunnel_url():
     return ""
 
 
-KIT_VERSION = "2.0.11"
+KIT_VERSION = "2.1.0"
 P2P_PORT = 3002  # P2P 창구(읽기 전용)
 
 
@@ -875,7 +892,7 @@ Markdown: <code>yourwiki-markdown.zip</code> → 문서마다 .md 파일 하나.
 <button onclick="api('/api/update_check').then(load)">지금 확인</button>
 <div id="updst" style="font-size:13px;color:#555;margin-top:6px"></div>
 <p style="font-size:12px;color:#777">12시간에 한 번 GitHub(iamtalker/yourwiki)의 최신 릴리스만 확인합니다. 보내는 정보는 없고, 스스로 설치하지 않습니다.
-새 판은 릴리스 내용을 보고 직접 받아 이 폴더에 덮어쓰세요(<code>wiki</code>·<code>data</code> 폴더는 그대로 두면 됩니다).</p></details>
+새 판은 릴리스 zip 을 받아 <code>kit</code> 폴더와 <code>유어위키.exe</code> 만 바꾸세요(<code>wiki</code> 폴더는 그대로 두면 됩니다. 새 판의 <code>kit</code> 안 <code>data</code>·<code>import</code>·<code>export</code> 는 옛 것을 옮기면 됩니다).</p></details>
 <details class="sec" id="sec-install" data-default="0"><summary><h2>설치 · 데이터</h2><span class="sum" id="sum-install"></span></summary>
 <button onclick="install('2026')">설치 / 다시 설치</button>
 <p style="font-size:13px;color:#555">다시 설치하면 이미 받은 파일은 건너뜁니다. 위키는 설치 동안 꺼집니다.</p><pre id="inslog"></pre></details>
@@ -1076,7 +1093,7 @@ def cleanup_leftovers():
     """전에 관리판 창을 그냥 닫아서 남은 위키 프로그램(엔진·중계 서버·갱신기·터널)을 정리한다."""
     if not WIN:
         return
-    ps = ("$root = '" + ROOT.replace("'", "''") + "'; "
+    ps = ("$root = '" + TOP.replace("'", "''") + "'; "
           "Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne " + str(os.getpid()) + " -and "
           "$_.ExecutablePath -and $_.ExecutablePath.StartsWith($root) -and "
           "$_.Name -in @('main.amd64.exe','python.exe','cloudflared.exe') } | "

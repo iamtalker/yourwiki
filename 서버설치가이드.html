@@ -17,7 +17,7 @@
 </style>
 
 <h1>유어위키 서버 설치 가이드</h1>
-<p class="muted">인터넷에 공개하는 서버(보통 리눅스 VPS)에 유어위키를 올리는 방법입니다. 내 PC에서만 쓸 거라면 <b>유어위키.bat</b>으로 충분합니다.</p>
+<p class="muted">인터넷에 공개하는 서버(보통 리눅스 VPS)에 유어위키를 올리는 방법입니다. 내 PC에서만 쓸 거라면 <b>유어위키.exe</b>로 충분합니다.</p>
 
 <div class="warn">
   이 데이터는 CC BY-NC-SA 2.0 KR입니다. 상업적 이용은 금지됩니다. 이 키트를 사용해 광고를 붙이거나 상업적으로 운영하는 것은 라이선스 위반입니다.<br>
@@ -38,22 +38,22 @@
 <div class="cmd"><code>git clone https://github.com/iamtalker/yourwiki yourwiki-kit && cd yourwiki-kit</code><button>복사</button></div>
 
 <h2>4. 설치 (1~2시간)</h2>
-<div class="cmd"><code>bash server/install.sh</code><button>복사</button></div>
+<div class="cmd"><code>bash kit/server/install.sh</code><button>복사</button></div>
 <p class="muted">엔진과 데이터(5.1GB)를 받아 해시를 검증하고 문서 약 180만 개를 넣습니다. 끊겨도 다시 실행하면 이어서 합니다.
 SSH 가 끊겨도 계속되게 하려면 <code>tmux</code> 나 <code>screen</code> 안에서 실행하세요.</p>
 
 <h2>5. 켜기</h2>
-<div class="cmd"><code>bash server/yourwiki.sh start</code><button>복사</button></div>
+<div class="cmd"><code>bash kit/server/yourwiki.sh start</code><button>복사</button></div>
 <p class="muted">브라우저로 <code>http://서버주소:3000</code> 에 접속합니다. 처음 켤 때는 검색 색인을 만드느라 준비에 시간이 걸립니다.
 나무위키 최신판 동기화는 기본으로 켜져 있습니다(robots.txt 준수, 6초에 1건 이하, 차단되면 즉시 중단).</p>
 
 <h2>6. 부팅할 때 자동으로 켜기 (선택)</h2>
-<div class="cmd"><code>sudo bash server/yourwiki.sh install-service</code><button>복사</button></div>
+<div class="cmd"><code>sudo bash kit/server/yourwiki.sh install-service</code><button>복사</button></div>
 
 <h2>7. 자주 쓰는 명령</h2>
-<div class="cmd"><code>bash server/yourwiki.sh status</code><button>복사</button></div>
-<div class="cmd"><code>bash server/yourwiki.sh stop</code><button>복사</button></div>
-<div class="cmd"><code>LISTEN=127.0.0.1:3000 SYNC=queue bash server/yourwiki.sh start</code><button>복사</button></div>
+<div class="cmd"><code>bash kit/server/yourwiki.sh status</code><button>복사</button></div>
+<div class="cmd"><code>bash kit/server/yourwiki.sh stop</code><button>복사</button></div>
+<div class="cmd"><code>LISTEN=127.0.0.1:3000 SYNC=queue bash kit/server/yourwiki.sh start</code><button>복사</button></div>
 <p class="muted"><code>LISTEN</code>: 받을 주소(기본 <code>0.0.0.0:3000</code> = 외부 공개). <code>SYNC</code>: <code>auto</code>(기본) / <code>queue</code>(갱신 단추로 요청한 문서만) / <code>off</code>.
 한 번 준 값은 <code>yourwiki.conf</code> 에 기억되어 다음부터 그냥 <code>start</code> 해도 그대로입니다. P2P 공유(<code>P2P=on</code>) 등 다른 설정은 README 를 보세요.</p>
 

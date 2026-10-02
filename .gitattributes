@@ -4,3 +4,15 @@
 *.bat text eol=crlf
 *.gz binary
 *.woff2 binary
+
+# 배포 zip(git archive)에는 최상위에 유어위키.bat · 서버설치가이드.html · kit 만 들어간다. 저장소 전용 파일은 뺀다.
+/CLAUDE.md export-ignore
+/AGENTS.md export-ignore
+/LICENSE export-ignore
+/README.md export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore
+*.exe binary
+/kit/tests export-ignore
+/kit/refold export-ignore
+/kit/README_FOR_AI.md export-ignore
