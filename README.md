@@ -59,4 +59,4 @@
 사용법, 동기화, P2P, 내보내기·가져오기, Docker·리눅스 서버 설치는 **[kit/README.md](kit/README.md)**에 있습니다.
 변경 기록은 [kit/CHANGELOG.md](kit/CHANGELOG.md), 라이선스는 [LICENSE](LICENSE)(코드 MIT)와 [kit/NOTICE.md](kit/NOTICE.md)입니다.
 
-> 이 저장소는 **코드와 사용법**만 담고, 나무위키 문서 자체는 올리지 않습니다. 데이터는 설치할 때 archive.org(안 되면 Hugging Face)에서 받아 옵니다.
+> 이 저장소는 **코드와 사용법**만 담고, 나무위키 문서 자체는 올리지 않습니다. 변환한 데이터의 사본은 제작자가 archive.org·Hugging Face에 배포용으로 올려 두었고, 설치할 때 키트가 거기서 받아 옵니다(서버를 운영하는 것은 아닙니다).
