@@ -19,6 +19,7 @@ import json
 import mimetypes
 import os
 import pathlib
+import random
 import re
 import socketserver
 import sqlite3
@@ -366,6 +367,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 f'<a href="{back}">← 기다리지 않고 문서로 돌아가기</a></div><script>{script}</script>').encode("utf-8")
         self._send_bytes(page, "text/html; charset=utf-8")
 
+    def _random(self):
+        """무작위 문서: 엔진의 /random 은 문서가 많아 20초 넘게 걸려서, 번호(rowid)를 무작위로 찍어 바로 찾는다.
+        넘겨주기·분류·파일·사용자 문서는 건너뛴다. 실패하면 False(엔진에 맡김)."""
+        try:
+            path = os.path.join(os.path.dirname(os.path.abspath(self.queue_db)), "data.db")
+            db = sqlite3.connect(pathlib.Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+            try:
+                mx = db.execute("select max(rowid) from data").fetchone()[0] or 0
+                title = None
+                for _ in range(30):
+                    row = db.execute("select title, substr(data, 1, 30) from data where rowid >= ? limit 1",
+                                     (random.randrange(mx),)).fetchone()
+                    if not row or row[0].startswith(("category:", "file:", "user:")):
+                        continue
+                    if row[1].lstrip().lower().startswith(("#redirect", "#넘겨주기")):
+                        continue
+                    title = row[0]
+                    break
+            finally:
+                db.close()
+        except (sqlite3.Error, OSError, ValueError):
+            return False
+        if not title:
+            return False
+        self.send_response(302)
+        self.send_header("Location", "/w/" + urllib.parse.quote(title))
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        return True
+
     def _suggest(self):
         """검색창 자동완성: 입력한 글자로 시작하는 문서 제목 10개(제목 색인으로 바로 찾음)."""
         q = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q") or [""])[0].strip()
@@ -444,6 +476,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._serve_cdn()
         if self.path.startswith("/_kit/suggest") and self.queue_db:
             return self._suggest()
+        if self.path.split("?")[0] == "/random" and self.command == "GET" and self.queue_db:
+            if self._random():
+                return
         if self.path.startswith("/_kit/refresh_status") and self.queue_db:
             return self._refresh_status()
         if self.path.startswith("/_kit/refresh") and self.queue_db:
